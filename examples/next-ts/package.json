@@ -1,0 +1,8 @@
+{
+  "name": "wavebird-api-next-ts-example",
+  "private": true,
+  "type": "module",
+  "scripts": { "dev": "next dev", "build": "next build --webpack", "typecheck": "tsc --noEmit" },
+  "dependencies": { "next": "16.3.8", "react": "19.2.4", "react-dom": "19.2.4" },
+  "devDependencies": { "@types/node": "^25", "@types/react": "^19", "@types/react-dom": "^19", "typescript": "^5" }
+}

@@ -1,16 +1,16 @@
 # Wavebird publisher API
 
-`@wavebirdai/api` is a private, unpublished Banner/Native integration for the existing Wavebird REST API and hosted renderer. The established [`wavebird`](https://www.npmjs.com/package/wavebird) SDK remains separate. This package is prepared for standalone `wavebird-ai/api` GitHub release assets; it is not configured for npm publication.
+`@wavebirdai/api` is a GitHub pilot prerelease for Banner/Native integration with the existing Wavebird REST API and hosted renderer. It has not been published to npm. The established [`wavebird`](https://www.npmjs.com/package/wavebird) SDK remains separate.
 
 ## Installation
 
-After the versioned release asset is uploaded, install it directly from GitHub:
+Install the versioned release asset directly from GitHub:
 
 ```sh
 npm install https://github.com/wavebird-ai/api/releases/download/v0.1.0-local.0/wavebirdai-api-0.1.0-local.0.tgz
 ```
 
-This URL is pending until the release asset is uploaded. For local evaluation from a checkout, build and install the tarball instead:
+The release tag `v0.1.0-local.0` points to source commit `301e0f8df20defa9f7880c2227b6caf4f1210d12`; the attached tarball has SHA-256 `bc9c73978a93d34ccb957e7d76db56320da29a746456e58995b64f8ec6c8bdda`. For local evaluation from a checkout, build and install a local tarball:
 
 ```sh
 npm run build

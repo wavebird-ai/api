@@ -1,24 +1,39 @@
 # Wavebird publisher API
 
-`@wavebirdai/api` is a GitHub pilot prerelease for Banner/Native integration with the existing Wavebird REST API and hosted renderer. It has not been published to npm. The established [`wavebird`](https://www.npmjs.com/package/wavebird) SDK remains separate.
+`@wavebirdai/api` is a GitHub pilot prerelease for Banner/Native integration with the existing Wavebird REST API and hosted renderer. It is not published to npm. The established [`wavebird`](https://www.npmjs.com/package/wavebird) SDK remains separate. Version `0.1.0-local.1` adds the Next.js route generator; the existing `0.1.0-local.0` release asset remains unchanged.
 
 ## Installation
 
-Install the versioned release asset directly from GitHub:
+Install the versioned pilot asset directly from GitHub:
 
 ```sh
-npm install https://github.com/wavebird-ai/api/releases/download/v0.1.0-local.0/wavebirdai-api-0.1.0-local.0.tgz
+npm install https://github.com/wavebird-ai/api/releases/download/v0.1.0-local.1/wavebirdai-api-0.1.0-local.1.tgz
 ```
 
-The release tag `v0.1.0-local.0` points to source commit `301e0f8df20defa9f7880c2227b6caf4f1210d12`; the attached tarball has SHA-256 `bc9c73978a93d34ccb957e7d76db56320da29a746456e58995b64f8ec6c8bdda`. For local evaluation from a checkout, build and install a local tarball:
+For local evaluation from a checkout, build and install the tarball instead:
 
 ```sh
 npm run build
 npm pack --pack-destination .
-npm install /path/to/wavebirdai-api-0.1.0-local.0.tgz
+npm install /path/to/wavebirdai-api-0.1.0-local.1.tgz
 ```
 
 The [full REST reference](https://wavebird.ai/api/reference/endpoints) remains available for integrations without this package.
+
+Both JavaScript and TypeScript use the same package and URL; there is no separate language package.
+
+## Next.js route generator
+
+After installing the package, run one of these commands in an existing Next.js App Router project:
+
+```sh
+./node_modules/.bin/wavebird-next init --lang js --root . --app-dir app
+./node_modules/.bin/wavebird-next init --lang ts --root . --app-dir src/app
+```
+
+Choose one language and the actual App Router directory. The command refuses to overwrite existing files. It installs `lib/publisher`, `lib/auth`, and a fail-closed `lib/model`; required `app/api/generate`, `app/api/sponsor-slot`, and `app/api/sponsor-consent` route files; `components/WavebirdPlacement`; and `WAVEBIRD-SETUP.md`. The `src/app` option puts `lib` and `components` under `src/`. These routes are application files produced by the generator, not implicit package exports. A complete standalone JS or TS Next.js example is also included in the package's `examples/` directory.
+
+Set the server-only environment variables, insert actual saved Dashboard settings in `lib/publisher`, connect your real session check in `lib/auth`, and connect your existing model stream in `lib/model`. The supplied auth hook fails closed without its publisher-owned check path, and the generated model hook throws until replaced. The generated client component requires authenticated user and conversation IDs from the publisher. Mount it by the existing result area and call its returned ads object's `connectGeneration` around the existing request/stream consumer. The generated setup file shows the short entry point. Use your real consent lifecycle: the template selects Wavebird's consent dialog, while an `own_cmp` saved project must be wired to the publisher's actual CMP before any served test.
 
 ## Server and browser boundary
 

@@ -77,6 +77,7 @@ export function createPublisherAds(options) {
     if (disposed) return;
     sponsor = window.wavebird.createChatSponsor({ target: slot, ...binding,
       clientId: options.clientId, surfaceId: options.surfaceId, timing, consentMode,
+      ...(options.getFormat === undefined ? {} : { getFormat: options.getFormat }),
       ...(options.placementEndpoint === undefined ? {} : { placementEndpoint: options.placementEndpoint }),
       ...(options.consentEndpoint === undefined ? {} : { consentEndpoint: options.consentEndpoint }) });
     prepare();

@@ -1,13 +1,13 @@
 # Wavebird publisher API
 
-`@wavebirdai/api` is a GitHub pilot prerelease for Banner/Native integration with the existing Wavebird REST API and hosted renderer. It is not published to npm. The established [`wavebird`](https://www.npmjs.com/package/wavebird) SDK remains separate. Version `0.1.0-local.1` adds the Next.js route generator; the existing `0.1.0-local.0` release asset remains unchanged.
+`@wavebirdai/api` is a GitHub pilot prerelease for Banner/Native integration with the existing Wavebird REST API and hosted renderer. It is not published to npm. The established [`wavebird`](https://www.npmjs.com/package/wavebird) SDK remains separate. Version `0.1.0-local.2` forwards the saved format selection to the hosted renderer for the After placement path. Earlier release assets remain unchanged.
 
 ## Installation
 
 Install the versioned pilot asset directly from GitHub:
 
 ```sh
-npm install https://github.com/wavebird-ai/api/releases/download/v0.1.0-local.1/wavebirdai-api-0.1.0-local.1.tgz
+npm install https://github.com/wavebird-ai/api/releases/download/v0.1.0-local.2/wavebirdai-api-0.1.0-local.2.tgz
 ```
 
 For local evaluation from a checkout, build and install the tarball instead:
@@ -15,12 +15,14 @@ For local evaluation from a checkout, build and install the tarball instead:
 ```sh
 npm run build
 npm pack --pack-destination .
-npm install /path/to/wavebirdai-api-0.1.0-local.1.tgz
+npm install /path/to/wavebirdai-api-0.1.0-local.2.tgz
 ```
 
 The [full REST reference](https://wavebird.ai/api/reference/endpoints) remains available for integrations without this package.
 
 Both JavaScript and TypeScript use the same package and URL; there is no separate language package.
+
+For a saved single-format placement such as Banner-only After, pass `getFormat: () => "banner"` to `createPublisherAds` along with the matching same-origin placement endpoint. The package forwards that choice to the hosted renderer; the server still enforces the saved project and format. Omit `getFormat` when the saved placement intentionally lets Wavebird choose among supported formats.
 
 ## Next.js route generator
 

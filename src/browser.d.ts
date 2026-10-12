@@ -20,6 +20,7 @@ export function createPublisherAds(options: {
   consentMode?: "wavebird_consent" | "own_cmp";
   rendererUrl?: string;
   privacySettingsTarget?: string;
+  getFormat?: () => "banner" | "native" | "clip" | "auto";
   placementEndpoint?: string;
   consentEndpoint?: string;
 }): PublisherAds;

@@ -2,6 +2,37 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { createPublisherAds } from "../dist/browser.js";
 
+test("After Banner forwards the saved format to the hosted renderer", async () => {
+  const previousWindow = globalThis.window;
+  const previousDocument = globalThis.document;
+  const slot = { style: {}, setAttribute() {}, replaceChildren() {}, remove() {} };
+  let received;
+  globalThis.document = {
+    createElement: () => slot,
+    querySelector: () => null,
+  };
+  globalThis.window = {
+    wavebird: { createChatSponsor(options) { received = options; return { prepare: async () => {}, dispose() {} }; } },
+    addEventListener() {}, removeEventListener() {},
+  };
+  try {
+    const ads = createPublisherAds({
+      target: { append() {} }, clientId: "wbproj_savedafter", surfaceId: "chat_assistant",
+      jobType: "chat", userId: "user_test", conversationId: "chat_test", timing: "after",
+      consentMode: "own_cmp", placementEndpoint: "/api/package-after-slot",
+      consentEndpoint: "/api/package-after-consent", getFormat: () => "banner",
+    });
+    await ads.ready;
+    assert.equal(received.timing, "after");
+    assert.equal(received.placementEndpoint, "/api/package-after-slot");
+    assert.equal(received.getFormat(), "banner");
+    ads.dispose();
+  } finally {
+    globalThis.window = previousWindow;
+    globalThis.document = previousDocument;
+  }
+});
+
 test("built browser export follows active generation and discards a late response", async () => {
   const previousWindow = globalThis.window;
   const previousDocument = globalThis.document;
@@ -27,6 +58,7 @@ test("built browser export follows active generation and discards a late respons
       assert.equal(options.timing, "during");
       assert.equal(options.placementEndpoint, "/api/sponsor-slot");
       assert.equal(options.consentEndpoint, "/api/sponsor-consent");
+      assert.equal(options.getFormat(), "banner");
       assert.equal(options.secretKey, undefined);
       return sponsor;
     } },
@@ -46,6 +78,7 @@ test("built browser export follows active generation and discards a late respons
       target, clientId: "wbproj_test", surfaceId: "chat_assistant", jobType: "chat",
       timing: "during", consentMode: "own_cmp", userId: "user_test", conversationId: "chat_test",
       placementEndpoint: "/api/sponsor-slot", consentEndpoint: "/api/sponsor-consent",
+      getFormat: () => "banner",
     });
     await ads.ready;
     assert.deepEqual(events, []);
@@ -124,6 +157,7 @@ test("late renderer load cannot start a completed during placement", async () =>
     globalThis.window.wavebird = { createChatSponsor: options => {
       assert.equal(Object.hasOwn(options, "placementEndpoint"), false);
       assert.equal(Object.hasOwn(options, "consentEndpoint"), false);
+      assert.equal(Object.hasOwn(options, "getFormat"), false);
       return {
         prepare: async () => {},
         onStarted: () => { started++; },

@@ -1,6 +1,6 @@
 {
   "name": "@wavebirdai/api",
-  "version": "0.1.0-local.1",
+  "version": "0.1.0-local.2",
   "private": true,
   "type": "module",
   "description": "Banner/Native publisher integration for the Wavebird API",

@@ -29,7 +29,7 @@ function normalizeOptions(options) {
   if (typeof options.jobType !== "string" || !options.jobType || typeof options.locale !== "string" || !options.locale) throw new Error("publisher_job_invalid");
   const base = String(options.apiBaseUrl || "https://api.wavebird.ai").trim().replace(/\/+$/, "").replace(/\/v1$/, "") + "/v1";
   if (!/^https:\/\//.test(base)) throw new Error("publisher_api_https_required");
-  if (options.publicOrigins !== undefined) {
+  {
     if (!Array.isArray(options.publicOrigins) || options.publicOrigins.length < 1 || options.publicOrigins.length > 8) throw new Error("publisher_public_origins_invalid");
     for (const origin of options.publicOrigins) {
       let url;
@@ -43,7 +43,6 @@ function normalizeOptions(options) {
 }
 
 function publicOrigin(request, options) {
-  if (!options.publicOrigins) return new URL(request.url).origin;
   const host = request.headers.get("host")?.toLowerCase();
   if (!host) return null;
   const matches = options.publicOrigins.filter(origin => new URL(origin).host.toLowerCase() === host);

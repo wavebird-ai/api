@@ -8,6 +8,7 @@ const saved = {
   secretKey: "sk_test_server_only",
   preferenceSecret: "0123456789abcdef0123456789abcdef",
   authorize: request => request.headers.get("authorization") === "Session publisher",
+  publicOrigins: ["https://publisher.example"],
   surfaceId: "chat_assistant",
   placementKey: "default",
   jobType: "chat",
@@ -26,7 +27,7 @@ const saved = {
 
 const routeRequest = (path, body, headers = {}) => new Request(`https://publisher.example${path}`, {
   method: body === undefined ? "GET" : "POST",
-  headers: { authorization: "Session publisher", origin: "https://publisher.example", "sec-fetch-site": "same-origin", ...headers },
+  headers: { host: "publisher.example", authorization: "Session publisher", origin: "https://publisher.example", "sec-fetch-site": "same-origin", ...headers },
   ...(body === undefined ? {} : { body: JSON.stringify(body) })
 });
 
@@ -95,7 +96,7 @@ test("No-Fill is relayed; missing auth, wrong origin, and GPC never reach Wavebi
 });
 
 test("configured public origins bind proxied and local routes to exact host, scheme, and port", async () => {
-  const publicOrigins = ["http://localhost:4173", "http://127.0.0.1:4173", "https://qa.free-models.com"];
+  const publicOrigins = ["http://localhost:4173", "http://127.0.0.1:4173", "https://another-publisher.example"];
   const server = createPublisherServer({ ...saved, publicOrigins });
   const proxied = (host, origin, headers = {}) => new Request("http://127.0.0.1:3000/api/sponsor-consent", {
     method: "POST",
@@ -124,12 +125,13 @@ test("configured public origins bind proxied and local routes to exact host, sch
     assert.equal((await server.consentPOST(proxied("localhost:4173", "http://127.0.0.1:4173"))).status, 403);
     assert.equal((await server.consentPOST(proxied("localhost:4173", "https://localhost:4173"))).status, 403);
     assert.equal((await server.consentPOST(proxied("localhost:4174", "http://localhost:4174"))).status, 403);
-    assert.equal((await server.consentPOST(proxied("qa.free-models.com", "https://evil.example"))).status, 403);
-    assert.equal((await server.consentPOST(proxied("qa.free-models.com", "https://qa.free-models.com", { "sec-fetch-site": "cross-site" }))).status, 403);
-    assert.equal((await server.consentPOST(proxied("qa.free-models.com", "https://qa.free-models.com", { authorization: "" }))).status, 401);
+    assert.equal((await server.consentPOST(proxied("another-publisher.example", "https://evil.example"))).status, 403);
+    assert.equal((await server.consentPOST(proxied("another-publisher.example", "https://another-publisher.example", { "sec-fetch-site": "cross-site" }))).status, 403);
+    assert.equal((await server.consentPOST(proxied("another-publisher.example", "https://another-publisher.example", { authorization: "" }))).status, 401);
     assert.equal(upstreamCalls, 3);
   });
-  assert.throws(() => createPublisherServer({ ...saved, publicOrigins: ["http://qa.free-models.com"] }), /publisher_public_origins_invalid/);
+  assert.throws(() => createPublisherServer({ ...saved, publicOrigins: ["http://another-publisher.example"] }), /publisher_public_origins_invalid/);
+  assert.throws(() => createPublisherServer({ ...saved, publicOrigins: undefined }), /publisher_public_origins_invalid/);
   assert.throws(() => createPublisherServer({ ...saved, publicOrigins: ["http://localhost:4173/"] }), /publisher_public_origins_invalid/);
 });
 
@@ -351,7 +353,7 @@ test("generation wrapper reports model failure and propagates client abort", asy
     "x-wavebird-generation-id": "generation_abort",
   };
   const failed = await server.withGeneration({
-    request: new Request("https://publisher.example/api/chat", { method: "POST", headers }),
+    request: new Request("https://publisher.example/api/chat", { method: "POST", headers: { host: "publisher.example", ...headers } }),
     run: async () => { throw new Error("model_unavailable"); },
   });
   assert.deepEqual((await failed.text()).trim().split("\n").map(line => JSON.parse(line).type), ["started", "error"]);
@@ -359,7 +361,7 @@ test("generation wrapper reports model failure and propagates client abort", asy
   const controller = new AbortController();
   let modelSignal;
   const running = await server.withGeneration({
-    request: new Request("https://publisher.example/api/chat", { method: "POST", headers, signal: controller.signal }),
+    request: new Request("https://publisher.example/api/chat", { method: "POST", headers: { host: "publisher.example", ...headers }, signal: controller.signal }),
     run: signal => {
       modelSignal = signal;
       return new Response(new ReadableStream({

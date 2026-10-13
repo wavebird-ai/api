@@ -4,7 +4,7 @@ export type PublisherServerOptions = {
   secretKey: string;
   preferenceSecret: string;
   authorize: (request: Request) => boolean | Promise<boolean>;
-  publicOrigins?: string[];
+  publicOrigins: string[];
   surfaceId: string;
   placementKey: string;
   jobType: string;

@@ -1,4 +1,4 @@
-import { publisher } from "../../../lib/publisher";
+import { getPublisher } from "../../../lib/publisher";
 
-export const GET = publisher.consentGET;
-export const POST = publisher.consentPOST;
+export const GET = (request: Request): Promise<Response> => getPublisher().consentGET(request);
+export const POST = (request: Request): Promise<Response> => getPublisher().consentPOST(request);

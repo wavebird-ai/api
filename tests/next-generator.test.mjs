@@ -28,6 +28,8 @@ for (const [lang, appDir] of [["js", "app"], ["ts", "src/app"]]) {
     assert.match(auth, /return false/);
     const publisher = await readFile(join(base, "lib", `publisher.${ext}`), "utf8");
     assert.match(publisher, /WAVEBIRD_PUBLIC_ORIGINS/);
+    assert.match(publisher, /getPublisher\(\)/);
+    assert.doesNotMatch(publisher, /export const publisher = createPublisherServer/);
     const component = await readFile(join(base, "components", `WavebirdPlacement.${lang === "ts" ? "tsx" : "jsx"}`), "utf8");
     assert.match(component, /connectGeneration|onReady/);
     assert.doesNotMatch(component, /WAVEBIRD_SECRET_KEY|WAVEBIRD_PREFERENCE_SECRET/);

@@ -2,7 +2,10 @@ import "server-only";
 import { createPublisherServer } from "@wavebirdai/api/server";
 import { authorizePublisherRequest } from "./auth.js";
 
-export const publisher = createPublisherServer({
+let publisher;
+
+export function getPublisher() {
+  return publisher ??= createPublisherServer({
   apiBaseUrl: process.env.WAVEBIRD_API_BASE_URL,
   clientId: process.env.WAVEBIRD_CLIENT_ID,
   secretKey: process.env.WAVEBIRD_SECRET_KEY,
@@ -22,4 +25,5 @@ export const publisher = createPublisherServer({
   maxWidth: 728,
   maxHeight: 90,
   allowedSizes: [{ width: 728, height: 90 }]
-});
+  });
+}

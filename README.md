@@ -1,13 +1,13 @@
 # Wavebird publisher API
 
-`@wavebirdai/api` is a GitHub pilot prerelease for Banner/Native integration with the existing Wavebird REST API and hosted renderer. It is not published to npm. The established [`wavebird`](https://www.npmjs.com/package/wavebird) SDK remains separate. Version `0.1.0-local.3` requires explicit public-origin binding.
+`@wavebirdai/api` is a GitHub pilot prerelease for Banner/Native integration with the existing Wavebird REST API and hosted renderer. It is not published to npm. The established [`wavebird`](https://www.npmjs.com/package/wavebird) SDK remains separate. Version `0.1.0-local.4` requires explicit public-origin binding.
 
 ## Installation
 
 After the versioned pilot release is published, install the exact asset directly from GitHub:
 
 ```sh
-npm install https://github.com/wavebird-ai/api/releases/download/v0.1.0-local.3/wavebirdai-api-0.1.0-local.3.tgz
+npm install https://github.com/wavebird-ai/api/releases/download/v0.1.0-local.4/wavebirdai-api-0.1.0-local.4.tgz
 ```
 
 To evaluate this checkout before publication, build and install its tarball instead:
@@ -15,7 +15,7 @@ To evaluate this checkout before publication, build and install its tarball inst
 ```sh
 npm run build
 npm pack --pack-destination .
-npm install /path/to/wavebirdai-api-0.1.0-local.3.tgz
+npm install /path/to/wavebirdai-api-0.1.0-local.4.tgz
 ```
 
 The [full REST reference](https://wavebird.ai/api/reference/endpoints) remains available for integrations without this package.
@@ -40,6 +40,8 @@ Set the server-only environment variables, including `WAVEBIRD_PUBLIC_ORIGINS` w
 ## Server and browser boundary
 
 `@wavebirdai/api/server` exports `createPublisherServer`. Configure it with server-only Project ID, Server Test or Live Key, preference signing secret, the publisher's real request authorization function, exact `publicOrigins`, and the saved project/placement values shown in the dashboard. The origin list is required. The package compares the browser Origin with a configured public origin whose host matches the route Host, even when Next.js or a proxy gives the route an internal URL. `localhost` and `127.0.0.1` are separate origins, and each port and scheme must match exactly; HTTP is accepted only for loopback. It returns authenticated `placementPOST`, `consentGET`, `consentPOST`, and `withGeneration` handlers, plus the server-only `reportGeneration(jobId, event)` method. The helper constructs the existing `/v1/placements`, `/v1/consent`, and `/v1/jobs/{id}/generation/{event}` requests; it does not introduce a new Wavebird protocol or accept browser-supplied format or publisher overrides. The Wavebird API remains authoritative for saved scope, creative formats, duration, fallback, and financial classification.
+
+Create the server helper when a request arrives, as the included Next.js examples do. This lets Next.js build a publisher app without loading its server-only Test key into the build process; the helper still validates configuration before handling traffic.
 
 `withGeneration({ request, run, onLifecycle })` accepts an optional server-side observer. It receives `{ type, sessionId, generationId }` for `started` and one terminal state: `done`, `error`, or `abort`. Use it to forward lifecycle events to your own generation reporter; observer failures do not change the model response. It runs only for authenticated, same-origin requests with valid generation transport IDs. The callback is not awaited, and it receives no prompt or model bytes.
 

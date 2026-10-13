@@ -1,3 +1,3 @@
-import { publisher } from "../../../lib/publisher";
+import { getPublisher } from "../../../lib/publisher";
 
-export const POST = publisher.placementPOST;
+export const POST = (request: Request): Promise<Response> => getPublisher().placementPOST(request);

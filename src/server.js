@@ -29,13 +29,36 @@ function normalizeOptions(options) {
   if (typeof options.jobType !== "string" || !options.jobType || typeof options.locale !== "string" || !options.locale) throw new Error("publisher_job_invalid");
   const base = String(options.apiBaseUrl || "https://api.wavebird.ai").trim().replace(/\/+$/, "").replace(/\/v1$/, "") + "/v1";
   if (!/^https:\/\//.test(base)) throw new Error("publisher_api_https_required");
+  if (options.publicOrigins !== undefined) {
+    if (!Array.isArray(options.publicOrigins) || options.publicOrigins.length < 1 || options.publicOrigins.length > 8) throw new Error("publisher_public_origins_invalid");
+    for (const origin of options.publicOrigins) {
+      let url;
+      try { url = new URL(origin); } catch { throw new Error("publisher_public_origins_invalid"); }
+      const loopback = url.hostname === "localhost" || url.hostname === "127.0.0.1";
+      if (url.origin !== origin || (url.protocol !== "https:" && !(loopback && url.protocol === "http:"))) throw new Error("publisher_public_origins_invalid");
+    }
+    if (new Set(options.publicOrigins).size !== options.publicOrigins.length) throw new Error("publisher_public_origins_invalid");
+  }
   return { ...options, base, consentSource: options.consentMode === "wavebird_consent" ? "wavebird_consent" : "wrapper_cmp" };
 }
 
-function validOrigin(request, strict = true) {
+function publicOrigin(request, options) {
+  if (!options.publicOrigins) return new URL(request.url).origin;
+  const host = request.headers.get("host")?.toLowerCase();
+  if (!host) return null;
+  const matches = options.publicOrigins.filter(origin => new URL(origin).host.toLowerCase() === host);
+  const browserOrigin = request.headers.get("origin");
+  if (browserOrigin) return matches.includes(browserOrigin) ? browserOrigin : null;
+  if (matches.length === 1) return matches[0];
+  const routeOrigin = new URL(request.url).origin;
+  return matches.includes(routeOrigin) ? routeOrigin : null;
+}
+
+function validOrigin(request, options, strict = true) {
   const origin = request.headers.get("origin");
   const site = request.headers.get("sec-fetch-site");
-  return (strict ? origin === new URL(request.url).origin : !origin || origin === new URL(request.url).origin) &&
+  const expected = publicOrigin(request, options);
+  return expected !== null && (strict ? origin === expected : !origin || origin === expected) &&
     (strict ? site !== "cross-site" : !site || site === "same-origin");
 }
 
@@ -182,7 +205,7 @@ export function createPublisherServer(inputOptions) {
   const cookieName = `__Host-wavebird-preference-${options.clientId}-${options.surfaceId}`;
   const cookie = (value, ttl = PREFERENCE_TTL) => `${cookieName}=${value}; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=${ttl}`;
   const scope = request => ({ project: options.clientId, surface: options.surfaceId, version: PREFERENCE_VERSION,
-    profile: options.consentMode === "wavebird_consent" ? "wavebird_dialog" : "publisher_custom", origin: new URL(request.url).origin });
+    profile: options.consentMode === "wavebird_consent" ? "wavebird_dialog" : "publisher_custom", origin: publicOrigin(request, options) });
   async function preferenceKey() {
     if (!options.preferenceSecret || options.preferenceSecret.length < 32) throw new Error("preference_secret_required");
     return crypto.subtle.importKey("raw", new TextEncoder().encode(options.preferenceSecret), { name: "HMAC", hash: "SHA-256" }, false, ["sign", "verify"]);
@@ -199,7 +222,7 @@ export function createPublisherServer(inputOptions) {
   async function placementPOST(request) {
     if (!await authorized(request)) return response("authentication_required", 401);
     if (gpc(request)) return response("privacy_signal_policy_required", 403);
-    if (!validOrigin(request)) return response("invalid_origin", 403);
+    if (!validOrigin(request, options)) return response("invalid_origin", 403);
     const qaOutcomes = new URL(request.url).searchParams.getAll("qa_test_outcome");
     if (qaOutcomes.length > 1 || (qaOutcomes.length === 1 && qaOutcomes[0] !== "no_fill")) return response("invalid_qa_test_outcome", 400);
     if (qaOutcomes.length && !options.secretKey.startsWith("sk_test_")) return response("qa_test_outcome_requires_test_key", 403);
@@ -229,7 +252,7 @@ export function createPublisherServer(inputOptions) {
   async function consentGET(request) {
     if (!await authorized(request)) return response("authentication_required", 401);
     const headers = { "Cache-Control": "no-store", Vary: "Cookie, Sec-GPC" };
-    if (!validOrigin(request, false)) return response("invalid_origin", 403, headers);
+    if (!validOrigin(request, options, false)) return response("invalid_origin", 403, headers);
     if (gpc(request)) return Response.json({ preference: null }, { headers });
     try {
       const value = (request.headers.get("cookie") || "").split(";").map(value => value.trim())
@@ -249,7 +272,7 @@ export function createPublisherServer(inputOptions) {
   }
   async function consentPOST(request) {
     if (!await authorized(request)) return response("authentication_required", 401);
-    if (!validOrigin(request)) return response("invalid_origin", 403);
+    if (!validOrigin(request, options)) return response("invalid_origin", 403);
     if (gpc(request)) return response("privacy_signal_policy_required", 403);
     const input = await readPublisherJson(request);
     if (input instanceof Response) return input;
@@ -287,7 +310,7 @@ export function createPublisherServer(inputOptions) {
   }
   async function withGeneration({ request, run, onLifecycle }) {
     if (!await authorized(request)) return response("authentication_required", 401);
-    if (!validOrigin(request)) return response("invalid_origin", 403);
+    if (!validOrigin(request, options)) return response("invalid_origin", 403);
     const result = await generationTransport({ request, run });
     return observeGeneration(result, request, onLifecycle);
   }

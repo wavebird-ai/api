@@ -94,6 +94,45 @@ test("No-Fill is relayed; missing auth, wrong origin, and GPC never reach Wavebi
   });
 });
 
+test("configured public origins bind proxied and local routes to exact host, scheme, and port", async () => {
+  const publicOrigins = ["http://localhost:4173", "http://127.0.0.1:4173", "https://qa.free-models.com"];
+  const server = createPublisherServer({ ...saved, publicOrigins });
+  const proxied = (host, origin, headers = {}) => new Request("http://127.0.0.1:3000/api/sponsor-consent", {
+    method: "POST",
+    headers: { host, origin, authorization: "Session publisher", "sec-fetch-site": "same-origin", ...headers },
+    body: JSON.stringify({ session_id: "session_test", lifecycle_state: "granted", revision: 1, remember_for_30_days: true })
+  });
+  let upstreamCalls = 0;
+  await withFetch(async () => {
+    upstreamCalls++;
+    return Response.json({ authoritative_consent: { lifecycle_state: "granted", revision: 1 } });
+  }, async () => {
+    for (const origin of publicOrigins) {
+      const host = new URL(origin).host;
+      const granted = await server.consentPOST(proxied(host, origin));
+      assert.equal(granted.status, 200, origin);
+      const cookie = granted.headers.get("set-cookie");
+      const signed = cookie.split(";")[0].split("=")[1];
+      const scope = JSON.parse(Buffer.from(signed.split(".")[0], "base64url").toString("utf8"));
+      assert.equal(scope.origin, origin);
+      const recalled = await server.consentGET(new Request("http://127.0.0.1:3000/api/sponsor-consent", {
+        headers: { host, authorization: "Session publisher", cookie: cookie.split(";")[0], "sec-fetch-site": "same-origin" }
+      }));
+      assert.equal(recalled.status, 200);
+      assert.equal((await recalled.json()).preference.state, "granted");
+    }
+    assert.equal((await server.consentPOST(proxied("localhost:4173", "http://127.0.0.1:4173"))).status, 403);
+    assert.equal((await server.consentPOST(proxied("localhost:4173", "https://localhost:4173"))).status, 403);
+    assert.equal((await server.consentPOST(proxied("localhost:4174", "http://localhost:4174"))).status, 403);
+    assert.equal((await server.consentPOST(proxied("qa.free-models.com", "https://evil.example"))).status, 403);
+    assert.equal((await server.consentPOST(proxied("qa.free-models.com", "https://qa.free-models.com", { "sec-fetch-site": "cross-site" }))).status, 403);
+    assert.equal((await server.consentPOST(proxied("qa.free-models.com", "https://qa.free-models.com", { authorization: "" }))).status, 401);
+    assert.equal(upstreamCalls, 3);
+  });
+  assert.throws(() => createPublisherServer({ ...saved, publicOrigins: ["http://qa.free-models.com"] }), /publisher_public_origins_invalid/);
+  assert.throws(() => createPublisherServer({ ...saved, publicOrigins: ["http://localhost:4173/"] }), /publisher_public_origins_invalid/);
+});
+
 test("existing sandbox No-Fill control is forwarded only with a Test key", async () => {
   const calls = [];
   const server = createPublisherServer(saved);

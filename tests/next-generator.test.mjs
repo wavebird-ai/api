@@ -26,6 +26,8 @@ for (const [lang, appDir] of [["js", "app"], ["ts", "src/app"]]) {
     assert.match(model, /throw new Error\("Connect your existing authenticated generation stream/);
     const auth = await readFile(join(base, "lib", `auth.${ext}`), "utf8");
     assert.match(auth, /return false/);
+    const publisher = await readFile(join(base, "lib", `publisher.${ext}`), "utf8");
+    assert.match(publisher, /WAVEBIRD_PUBLIC_ORIGINS/);
     const component = await readFile(join(base, "components", `WavebirdPlacement.${lang === "ts" ? "tsx" : "jsx"}`), "utf8");
     assert.match(component, /connectGeneration|onReady/);
     assert.doesNotMatch(component, /WAVEBIRD_SECRET_KEY|WAVEBIRD_PREFERENCE_SECRET/);

@@ -8,6 +8,7 @@ export const publisher = createPublisherServer({
   secretKey: process.env.WAVEBIRD_SECRET_KEY,
   preferenceSecret: process.env.WAVEBIRD_PREFERENCE_SECRET,
   authorize: authorizePublisherRequest,
+  publicOrigins: (process.env.WAVEBIRD_PUBLIC_ORIGINS ?? "").split(",").map(value => value.trim()).filter(Boolean),
   surfaceId: "chat_assistant",
   placementKey: "default",
   jobType: "chat",

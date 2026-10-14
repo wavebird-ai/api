@@ -24,7 +24,9 @@ function normalizeOptions(options) {
   if (!Array.isArray(options.allowedFormats) || options.allowedFormats.length === 0 || options.allowedFormats.some(value => !["banner", "native"].includes(value))) throw new Error("publisher_formats_invalid");
   if (!["above", "below", "sidebar", "between"].includes(options.positionHint)) throw new Error("publisher_position_invalid");
   if (!Number.isSafeInteger(options.maxWidth) || options.maxWidth < 1 || !Number.isSafeInteger(options.maxHeight) || options.maxHeight < 1) throw new Error("publisher_envelope_invalid");
-  if (!Array.isArray(options.allowedSizes) || options.allowedSizes.length === 0 || options.allowedSizes.some(size => !Number.isSafeInteger(size.width) || !Number.isSafeInteger(size.height) || size.width < 1 || size.height < 1 || size.width > options.maxWidth || size.height > options.maxHeight)) throw new Error("publisher_sizes_invalid");
+  if (!Array.isArray(options.allowedSizes) || options.allowedSizes.length === 0 || options.allowedSizes.some(size => !Number.isSafeInteger(size.width) || !Number.isSafeInteger(size.height) || size.width < 1 || size.height < 1 || size.width > options.maxWidth || size.height > options.maxHeight ||
+    (size.formats !== undefined && (!Array.isArray(size.formats) || size.formats.length === 0 || size.formats.some(format => !options.allowedFormats.includes(format)))))) throw new Error("publisher_sizes_invalid");
+  if (options.responsiveSizeSelection !== undefined && typeof options.responsiveSizeSelection !== "boolean") throw new Error("publisher_responsive_selection_invalid");
   if (!options.publisher || typeof options.publisher.app_name !== "string" || typeof options.publisher.app_domain !== "string" || !Array.isArray(options.publisher.categories)) throw new Error("publisher_identity_invalid");
   if (typeof options.jobType !== "string" || !options.jobType || typeof options.locale !== "string" || !options.locale) throw new Error("publisher_job_invalid");
   const base = String(options.apiBaseUrl || "https://api.wavebird.ai").trim().replace(/\/+$/, "").replace(/\/v1$/, "") + "/v1";
@@ -227,13 +229,37 @@ export function createPublisherServer(inputOptions) {
     if (qaOutcomes.length && !options.secretKey.startsWith("sk_test_")) return response("qa_test_outcome_requires_test_key", 403);
     const input = await readPublisherJson(request);
     if (input instanceof Response) return input;
+    let allowedSizes = options.allowedSizes.map(({ width, height }) => ({ width, height }));
+    let allowedFormats = options.allowedFormats;
+    let maxWidth = options.maxWidth;
+    let maxHeight = options.maxHeight;
+    if (options.responsiveSizeSelection === true) {
+      const bounds = input?.container_size;
+      if (!bounds || !Number.isSafeInteger(bounds.width) || !Number.isSafeInteger(bounds.height) ||
+          bounds.width < 1 || bounds.height < 1 || bounds.width > 8192 || bounds.height > 8192) {
+        return response("publisher_container_size_invalid", 400);
+      }
+      const requestedFormat = input?.format ?? "auto";
+      if (requestedFormat !== "auto" && !options.allowedFormats.includes(requestedFormat)) return response("publisher_format_invalid", 400);
+      const fitting = options.allowedSizes.filter(size => size.width <= bounds.width && size.height <= bounds.height &&
+        (requestedFormat === "auto" || (size.formats ?? options.allowedFormats).includes(requestedFormat)))
+        .sort((a, b) => b.width - a.width || b.height - a.height);
+      if (fitting.length === 0) return Response.json({ decision: { fill: false, reason: "no_fit" }, placement: null }, { headers: { "Cache-Control": "no-store" } });
+      const selected = fitting[0];
+      allowedSizes = [{ width: selected.width, height: selected.height }];
+      allowedFormats = requestedFormat === "auto"
+        ? options.allowedFormats.filter(format => fitting.some(size => size.width === selected.width && size.height === selected.height && (size.formats ?? options.allowedFormats).includes(format)))
+        : [requestedFormat];
+      maxWidth = Math.min(maxWidth, bounds.width);
+      maxHeight = Math.min(maxHeight, bounds.height);
+    }
     const sessionId = typeof input?.session_id === "string" && input.session_id.trim() ? input.session_id.trim() : crypto.randomUUID();
     const body = {
       client_id: options.clientId, session_id: sessionId, job_type: options.jobType, locale: options.locale,
       slots_requested: 1, placement_key: options.placementKey,
-      slot_hint: { position: options.positionHint, max_width: options.maxWidth, max_height: options.maxHeight,
-        allowed_sizes: options.allowedSizes, presentation_version: "sponsored_moment_v2" },
-      overrides: { allowed_formats: options.allowedFormats, timing: options.timing,
+      slot_hint: { position: options.positionHint, max_width: maxWidth, max_height: maxHeight,
+        allowed_sizes: allowedSizes, presentation_version: "sponsored_moment_v2" },
+      overrides: { allowed_formats: allowedFormats, timing: options.timing,
         bidfloor: options.bidfloor ?? 0.5, bidfloor_currency: options.bidfloorCurrency ?? "EUR",
         gdpr_applies: options.gdprApplies === true,
         publisher: { app_name: options.publisher.app_name, app_domain: options.publisher.app_domain,

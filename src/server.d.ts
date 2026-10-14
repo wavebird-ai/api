@@ -17,7 +17,8 @@ export type PublisherServerOptions = {
   positionHint: "above" | "below" | "sidebar" | "between";
   maxWidth: number;
   maxHeight: number;
-  allowedSizes: Array<{ width: number; height: number }>;
+  allowedSizes: Array<{ width: number; height: number; formats?: Array<"banner" | "native"> }>;
+  responsiveSizeSelection?: boolean;
   bidfloor?: number;
   bidfloorCurrency?: string;
   blockedCategories?: string[];

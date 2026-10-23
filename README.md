@@ -1,18 +1,18 @@
 # Wavebird publisher API
 
-`@wavebirdai/api` is a pilot package for Banner/Native integration with the existing Wavebird REST API and hosted renderer. This `0.1.0-local.5` candidate is available only as a local tarball; it has not been published to GitHub or npm. The established [`wavebird`](https://www.npmjs.com/package/wavebird) SDK remains separate.
+`@wavebirdai/api` is a pilot package for Banner/Native integration with the existing Wavebird REST API and hosted renderer. This `0.1.0-beta.1` source is a local distribution candidate and has not been published. The pinned public GitHub `.4` and optional `.5` archives remain available; existing publishers keep their installed version unless they opt in. The established [`wavebird`](https://www.npmjs.com/package/wavebird) SDK remains separate.
 
 ## Installation
 
-To evaluate this candidate locally, build and install its tarball:
+To evaluate this candidate locally, build and install its tarball. This is not an npm registry install:
 
 ```sh
 npm run build
 npm pack --pack-destination .
-npm install /path/to/wavebirdai-api-0.1.0-local.5.tgz
+npm install /path/to/wavebirdai-api-0.1.0-beta.1.tgz
 ```
 
-The currently published `.4` GitHub asset remains the fixed-size pilot version. Do not use it for the responsive option described below.
+The public `.4` GitHub asset remains the fixed-size pilot version. Public `.5` adds optional responsive selection. This candidate corrects the responsive generator example and package guidance; neither public archive is overwritten.
 
 The [full REST reference](https://wavebird.ai/api/reference/endpoints) remains available for integrations without this package.
 
@@ -29,7 +29,7 @@ After installing the package, run one of these commands in an existing Next.js A
 ./node_modules/.bin/wavebird-next init --lang ts --root . --app-dir src/app
 ```
 
-Choose one language and the actual App Router directory. The command refuses to overwrite existing files. It installs `lib/publisher`, `lib/auth`, and a fail-closed `lib/model`; required `app/api/generate`, `app/api/sponsor-slot`, and `app/api/sponsor-consent` route files; `components/WavebirdPlacement`; and `WAVEBIRD-SETUP.md`. The `src/app` option puts `lib` and `components` under `src/`. These routes are application files produced by the generator, not implicit package exports. A complete standalone JS or TS Next.js example is also included in the package's `examples/` directory.
+Choose one language and the actual App Router directory. The command refuses to overwrite existing files. It installs `lib/publisher`, `lib/auth`, and a fail-closed `lib/model`; required `app/api/generate`, `app/api/sponsor-slot`, and `app/api/sponsor-consent` route files; `components/WavebirdPlacement`; and `WAVEBIRD-SETUP.md`. The `src/app` option puts `lib` and `components` under `src/`. These routes are application files produced by the generator, not implicit package exports. A complete standalone JS or TS Next.js example is also included in the package's `examples/` directory. The generated publisher lists two illustrative Banner sizes and enables responsive selection; replace both sizes with the exact saved project sizes before Test traffic.
 
 Set the server-only environment variables, including `WAVEBIRD_PUBLIC_ORIGINS` with the exact public origins saved for your app, insert actual saved Dashboard settings in `lib/publisher`, connect your real session check in `lib/auth`, and connect your existing model stream in `lib/model`. The supplied auth hook fails closed without its publisher-owned check path, and the generated model hook throws until replaced. The generated client component requires authenticated user and conversation IDs from the publisher. Mount it by the existing result area and call its returned ads object's `connectGeneration` around the existing request/stream consumer. The generated setup file shows the short entry point. Use your real consent lifecycle: the template selects Wavebird's consent dialog, while an `own_cmp` saved project must be wired to the publisher's actual CMP before any served test.
 

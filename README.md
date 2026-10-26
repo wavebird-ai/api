@@ -1,18 +1,16 @@
 # Wavebird publisher API
 
-`@wavebirdai/api` is a pilot package for Banner/Native integration with the existing Wavebird REST API and hosted renderer. This `0.1.0-beta.1` source is a local distribution candidate and has not been published. The pinned public GitHub `.4` and optional `.5` archives remain available; existing publishers keep their installed version unless they opt in. The established [`wavebird`](https://www.npmjs.com/package/wavebird) SDK remains separate.
+`@wavebirdai/api` is a pilot package for Banner/Native integration with the existing Wavebird REST API and hosted renderer. Version `0.1.0-beta.1` is an opt-in prerelease. The pinned public GitHub `.4` and optional `.5` archives remain available; existing publishers keep their installed version unless they opt in. The established [`wavebird`](https://www.npmjs.com/package/wavebird) SDK remains separate.
 
 ## Installation
 
-To evaluate this candidate locally, build and install its tarball. This is not an npm registry install:
+For the npm prerelease, run this in the existing Next.js app directory beside `package.json`:
 
 ```sh
-npm run build
-npm pack --pack-destination .
-npm install /path/to/wavebirdai-api-0.1.0-beta.1.tgz
+npm install @wavebirdai/api@0.1.0-beta.1
 ```
 
-The public `.4` GitHub asset remains the fixed-size pilot version. Public `.5` adds optional responsive selection. This candidate corrects the responsive generator example and package guidance; neither public archive is overwritten.
+The public `.4` GitHub asset remains the fixed-size pilot version. Public `.5` adds optional responsive selection. This prerelease corrects the responsive generator example and package guidance; neither public archive is overwritten. A version change does not migrate an existing integration automatically.
 
 The [full REST reference](https://wavebird.ai/api/reference/endpoints) remains available for integrations without this package.
 
@@ -55,4 +53,4 @@ The required server-only values are `WAVEBIRD_CLIENT_ID`, `WAVEBIRD_SECRET_KEY`,
 
 ## Test scope
 
-The browser and generation transport sources are included in this repository so the package builds without the dashboard repository. The server route wrapper is tested locally against the existing REST request shape and security boundaries. Browser and deployment acceptance still depend on normal QA and the final publisher onboarding gates. Test traffic must remain nonpayable; no npm publication or Live activation is part of this package preparation.
+The browser and generation transport sources are included in this repository so the package builds without the dashboard repository. The server route wrapper is tested locally against the existing REST request shape and security boundaries. Browser and deployment acceptance still depend on normal QA and the final publisher onboarding gates. Test traffic must remain nonpayable; installing this package does not activate Live ads.

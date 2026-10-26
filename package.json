@@ -5,6 +5,7 @@
   "type": "module",
   "description": "Banner/Native publisher integration for the Wavebird API",
   "license": "MIT",
+  "repository": { "type": "git", "url": "https://github.com/wavebird-ai/api" },
   "engines": { "node": ">=20" },
   "files": ["dist", "examples", "bin", "templates", "README.md", "LICENSE"],
   "bin": { "wavebird-next": "./bin/wavebird-next.mjs" },

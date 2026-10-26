@@ -62,6 +62,6 @@ export async function install(argv) {
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   install(process.argv.slice(2)).then(result => {
-    process.stdout.write(`Installed ${result.lang.toUpperCase()} Wavebird routes and connectors in ${result.projectRoot}. Read WAVEBIRD-SETUP.md.\n`);
+    process.stdout.write(`Installed ${result.lang.toUpperCase()} wavebird routes and connectors in ${result.projectRoot}. Read WAVEBIRD-SETUP.md.\n`);
   }).catch(error => { process.stderr.write(`${error.message}\n`); process.exitCode = 1; });
 }

@@ -1,6 +1,6 @@
 # Wavebird publisher API
 
-`@wavebirdai/api` is a pilot package for Banner/Native integration with the existing Wavebird REST API and hosted renderer. Version `0.1.0-beta.1` is an opt-in prerelease. The pinned public GitHub `.4` and optional `.5` archives remain available; existing publishers keep their installed version unless they opt in. The established [`wavebird`](https://www.npmjs.com/package/wavebird) SDK remains separate.
+`@wavebirdai/api` provides Banner/Native integration with the Wavebird REST API and hosted renderer. Version `0.1.0-beta.1` is an opt-in prerelease. The pinned public GitHub `.4` and optional `.5` archives remain available; existing publishers keep their installed version unless they opt in. The established [`wavebird`](https://www.npmjs.com/package/wavebird) SDK remains separate.
 
 ## Installation
 
@@ -10,7 +10,7 @@ For the npm prerelease, run this in the existing Next.js app directory beside `p
 npm install @wavebirdai/api@0.1.0-beta.1
 ```
 
-The public `.4` GitHub asset remains the fixed-size pilot version. Public `.5` adds optional responsive selection. This prerelease corrects the responsive generator example and package guidance; neither public archive is overwritten. A version change does not migrate an existing integration automatically.
+The public `.4` GitHub asset uses fixed sizes. Public `.5` adds optional responsive selection. This prerelease corrects the responsive generator example and package guidance; neither public archive is overwritten. A version change does not migrate an existing integration automatically.
 
 The [full REST reference](https://wavebird.ai/api/reference/endpoints) remains available for integrations without this package.
 

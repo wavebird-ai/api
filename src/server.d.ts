@@ -13,11 +13,11 @@ export type PublisherServerOptions = {
   consentMode: "wavebird_consent" | "own_cmp";
   gdprApplies: boolean;
   publisher: { app_name: string; app_domain: string; categories: string[] };
-  allowedFormats: Array<"banner" | "native">;
+  allowedFormats: Array<"banner" | "native" | "clip">;
   positionHint: "above" | "below" | "sidebar" | "between";
   maxWidth: number;
   maxHeight: number;
-  allowedSizes: Array<{ width: number; height: number; formats?: Array<"banner" | "native"> }>;
+  allowedSizes: Array<{ width: number; height: number; formats?: Array<"banner" | "native" | "clip"> }>;
   responsiveSizeSelection?: boolean;
   bidfloor?: number;
   bidfloorCurrency?: string;

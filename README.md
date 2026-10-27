@@ -1,22 +1,18 @@
 # wavebird publisher API
 
-`@wavebirdai/api` provides Banner/Native integration with the wavebird REST API and hosted renderer. Version `0.1.0-beta.1` is an opt-in prerelease. The pinned public GitHub `.4` and optional `.5` archives remain available; existing publishers keep their installed version unless they opt in. The established [`wavebird`](https://www.npmjs.com/package/wavebird) SDK remains separate.
+`@wavebirdai/api` provides Banner, Native and Clip integration with the wavebird REST API and hosted renderer. The pinned public GitHub `.4` and optional `.5` archives, and npm `0.1.0-beta.1`, support Banner and Native. Existing publishers keep their installed version unless they opt in. The established [`wavebird`](https://www.npmjs.com/package/wavebird) SDK remains separate.
 
 ## Installation
 
-For the npm prerelease, run this in the existing Next.js app directory beside `package.json`:
+Use the exact available package version and install command shown in Dashboard Overview for your saved project.
 
-```sh
-npm install @wavebirdai/api@0.1.0-beta.1
-```
-
-The public `.4` GitHub asset uses fixed sizes. Public `.5` adds optional responsive selection. This prerelease corrects the responsive generator example and package guidance; neither public archive is overwritten. A version change does not migrate an existing integration automatically.
+The public `.4` GitHub asset uses fixed sizes. Public `.5` adds optional responsive selection. A version change does not migrate an existing integration automatically.
 
 The [full REST reference](https://wavebird.ai/api/reference/endpoints) remains available for integrations without this package.
 
 Both JavaScript and TypeScript use the same package and URL; there is no separate language package.
 
-For a saved single-format placement such as Banner-only After, pass `getFormat: () => "banner"` to `createPublisherAds` along with the matching same-origin placement endpoint. The package forwards that choice to the hosted renderer; the server still enforces the saved project and format. Omit `getFormat` when the saved placement intentionally lets wavebird choose among supported formats.
+For a saved single-format placement such as Clip-only After, pass `getFormat: () => "clip"` to `createPublisherAds` along with the matching same-origin placement endpoint. The package forwards that choice to the hosted renderer; the server still enforces the saved project and format. Omit `getFormat` when the saved placement intentionally lets wavebird choose among supported formats.
 
 ## Next.js route generator
 
@@ -35,7 +31,7 @@ Set the server-only environment variables, including `WAVEBIRD_PUBLIC_ORIGINS` w
 
 `@wavebirdai/api/server` exports `createPublisherServer`. Configure it with server-only Project ID, Server Test or Live Key, preference signing secret, the publisher's real request authorization function, exact `publicOrigins`, and the saved project/placement values shown in the dashboard. The origin list is required. The package compares the browser Origin with a configured public origin whose host matches the route Host, even when Next.js or a proxy gives the route an internal URL. `localhost` and `127.0.0.1` are separate origins, and each port and scheme must match exactly; HTTP is accepted only for loopback. It returns authenticated `placementPOST`, `consentGET`, `consentPOST`, and `withGeneration` handlers, plus the server-only `reportGeneration(jobId, event)` method. The helper constructs the existing `/v1/placements`, `/v1/consent`, and `/v1/jobs/{id}/generation/{event}` requests; it does not introduce a new wavebird protocol. The wavebird API remains authoritative for saved scope, creative formats, duration, fallback, and financial classification.
 
-Responsive selection is opt-in with `responsiveSizeSelection: true`. The hosted browser adapter sends the measured reserved container size. The server chooses one of the saved `allowedSizes` that fits, or returns `no_fit` without an upstream placement request. A size can carry `formats: ["banner"]`, `formats: ["native"]`, or both; this annotation remains on the publisher server and is stripped from the wavebird request. A browser format preference is accepted only when it is among the saved `allowedFormats` and compatible with the selected size. Without opt-in, existing fixed-size requests retain their previous behavior. Reserve enough height for the selected creative and its controls; do not stretch the returned creative or place it over the model result.
+Responsive selection is opt-in with `responsiveSizeSelection: true`. The hosted browser adapter sends the measured reserved container size. The server chooses one of the saved `allowedSizes` that fits, or returns `no_fit` without an upstream placement request. A size can carry `formats: ["banner"]`, `formats: ["native"]`, `formats: ["clip"]`, or an approved combination; this annotation remains on the publisher server and is stripped from the wavebird request. A browser format preference is accepted only when it is among the saved `allowedFormats` and compatible with the selected size. Without opt-in, existing fixed-size requests retain their previous behavior. Reserve enough height for the selected creative and its controls; do not stretch the returned creative or place it over the model result.
 
 Create the server helper when a request arrives, as the included Next.js examples do. This lets Next.js build a publisher app without loading its server-only Test key into the build process; the helper still validates configuration before handling traffic.
 

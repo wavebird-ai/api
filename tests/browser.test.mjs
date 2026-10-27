@@ -33,6 +33,36 @@ test("After Banner forwards the saved format to the hosted renderer", async () =
   }
 });
 
+test("After Clip forwards only publisher placement wiring and owns renderer lifecycle", async () => {
+  const previousWindow = globalThis.window;
+  const previousDocument = globalThis.document;
+  const slot = { style: {}, setAttribute() {}, replaceChildren() {}, remove() {} };
+  const calls = [];
+  globalThis.document = { createElement: () => slot, querySelector: () => null };
+  globalThis.window = {
+    wavebird: { createChatSponsor(options) {
+      calls.push(options);
+      return { prepare: async () => {}, onStarted: id => calls.push(["started", id]),
+        onDone: id => calls.push(["done", id]), dispose: () => calls.push("disposed") };
+    } }, addEventListener() {}, removeEventListener() {},
+  };
+  try {
+    const ads = createPublisherAds({ target: { append() {} }, clientId: "wbproj_clip",
+      surfaceId: "image_generator", jobType: "image_generation", userId: "user_test",
+      conversationId: "image_test", timing: "after", consentMode: "wavebird_consent",
+      placementEndpoint: "/api/wavebird/placement", consentEndpoint: "/api/wavebird/consent",
+      getFormat: () => "clip" });
+    await ads.ready;
+    assert.equal(calls[0].getFormat(), "clip");
+    assert.equal(calls[0].timing, "after");
+    assert.equal(calls[0].placementEndpoint, "/api/wavebird/placement");
+    assert.equal(calls[0].secretKey, undefined);
+    assert.equal(calls[0].preferenceSecret, undefined);
+    ads.dispose();
+    assert.equal(calls.at(-1), "disposed");
+  } finally { globalThis.window = previousWindow; globalThis.document = previousDocument; }
+});
+
 test("built browser export follows active generation and discards a late response", async () => {
   const previousWindow = globalThis.window;
   const previousDocument = globalThis.document;

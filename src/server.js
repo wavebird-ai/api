@@ -21,7 +21,7 @@ function normalizeOptions(options) {
   if (!ID.test(options.surfaceId || "") || !PLACEMENT_KEY.test(options.placementKey || "")) throw new Error("publisher_placement_invalid");
   if (!["before", "during", "after"].includes(options.timing)) throw new Error("publisher_timing_invalid");
   if (!["wavebird_consent", "own_cmp"].includes(options.consentMode)) throw new Error("publisher_consent_mode_invalid");
-  if (!Array.isArray(options.allowedFormats) || options.allowedFormats.length === 0 || options.allowedFormats.some(value => !["banner", "native"].includes(value))) throw new Error("publisher_formats_invalid");
+  if (!Array.isArray(options.allowedFormats) || options.allowedFormats.length === 0 || options.allowedFormats.some(value => !["banner", "native", "clip"].includes(value))) throw new Error("publisher_formats_invalid");
   if (!["above", "below", "sidebar", "between"].includes(options.positionHint)) throw new Error("publisher_position_invalid");
   if (!Number.isSafeInteger(options.maxWidth) || options.maxWidth < 1 || !Number.isSafeInteger(options.maxHeight) || options.maxHeight < 1) throw new Error("publisher_envelope_invalid");
   if (!Array.isArray(options.allowedSizes) || options.allowedSizes.length === 0 || options.allowedSizes.some(size => !Number.isSafeInteger(size.width) || !Number.isSafeInteger(size.height) || size.width < 1 || size.height < 1 || size.width > options.maxWidth || size.height > options.maxHeight ||

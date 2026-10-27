@@ -1,9 +1,9 @@
 {
   "name": "@wavebirdai/api",
-  "version": "0.1.0-beta.1",
+  "version": "0.1.0-beta.2",
   "private": false,
   "type": "module",
-  "description": "Banner/Native publisher integration for the wavebird API",
+  "description": "Banner, Native, and Clip publisher integration for the wavebird API",
   "license": "MIT",
   "repository": { "type": "git", "url": "https://github.com/wavebird-ai/api" },
   "engines": { "node": ">=20" },

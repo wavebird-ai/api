@@ -67,6 +67,31 @@ test("saved Banner configuration drives the existing REST placement payload", as
   assert.equal(calls[0].init.body.includes("sk_test_server_only"), false);
 });
 
+test("saved Clip configuration uses the package transport without broadening Banner or Native scope", async () => {
+  const clip = createPublisherServer({ ...saved, timing: "after", jobType: "image_generation",
+    allowedFormats: ["clip"], maxWidth: 640, maxHeight: 360,
+    allowedSizes: [{ width: 640, height: 360, formats: ["clip"] }] });
+  const calls = [];
+  await withFetch(async (url, init) => {
+    calls.push({ url, init, body: JSON.parse(init.body) });
+    return Response.json({ decision: { fill: false, no_fill_reason: "no_fill" }, placement: null });
+  }, async () => {
+    const result = await clip.placementPOST(routeRequest("/api/sponsor-slot", { session_id: "session_clip" }));
+    assert.equal(result.status, 200);
+    assert.equal((await result.json()).decision.fill, false);
+    assert.equal((await clip.placementPOST(routeRequest("/api/sponsor-slot", {}, { origin: "https://other.example" }))).status, 403);
+    assert.equal((await clip.placementPOST(routeRequest("/api/sponsor-slot", {}, { authorization: "" }))).status, 401);
+    assert.equal((await clip.placementPOST(routeRequest("/api/sponsor-slot", {}, { "sec-gpc": "1" }))).status, 403);
+  });
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].url, "https://api.wavebird.ai/v1/placements?wait_ms=1500");
+  assert.equal(calls[0].init.headers.Authorization, "Bearer sk_test_server_only");
+  assert.deepEqual(calls[0].body.overrides.allowed_formats, ["clip"]);
+  assert.equal(calls[0].body.overrides.timing, "after");
+  assert.deepEqual(calls[0].body.slot_hint.allowed_sizes, [{ width: 640, height: 360 }]);
+  assert.equal(calls[0].init.body.includes("sk_test_server_only"), false);
+});
+
 test("empty optional category arrays are omitted from the existing REST payload", async () => {
   const server = createPublisherServer({ ...saved,
     publisher: { ...saved.publisher, categories: [] }, blockedCategories: [] });

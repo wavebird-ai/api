@@ -1,5 +1,6 @@
 import json
 import unittest
+from dataclasses import replace
 
 from wavebird_publisher import PublisherConfig, PublisherRequest, PublisherResponse, PublisherServer
 
@@ -21,6 +22,25 @@ def request(origin, body=None, headers=None, method="POST"):
 
 
 class ServerTests(unittest.TestCase):
+    def test_three_formats_share_saved_scope_and_unknown_format_fails(self):
+        calls = []
+        cfg = replace(config(), allowed_formats=("banner", "native", "clip"), timing="after",
+                      allowed_sizes=((320, 50), (300, 250), (640, 360)), max_width=640, max_height=360)
+
+        def transport(url, body, key, timeout):
+            calls.append(json.loads(body))
+            return PublisherResponse(200, {}, b'{"decision":{"fill":false}}')
+
+        response = PublisherServer(cfg, transport).placement_post(
+            request("https://publisher-one.example", {"session_id": "s", "allowed_formats": ["native"]}))
+        self.assertEqual(response.status, 200)
+        self.assertEqual(calls[0]["overrides"]["allowed_formats"], ["banner", "native", "clip"])
+        self.assertEqual(calls[0]["overrides"]["timing"], "after")
+        self.assertEqual(calls[0]["slot_hint"]["allowed_sizes"], [
+            {"width": 320, "height": 50}, {"width": 300, "height": 250}, {"width": 640, "height": 360}])
+        with self.assertRaisesRegex(ValueError, "publisher_formats_invalid"):
+            replace(cfg, allowed_formats=("unknown",))
+
     def test_two_publishers_use_only_their_saved_scope(self):
         for origin, client in (("https://publisher-one.example", "wbproj_one"), ("https://publisher-two.example", "wbproj_two")):
             calls = []

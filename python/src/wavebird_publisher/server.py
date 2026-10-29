@@ -76,7 +76,7 @@ class PublisherConfig:
             raise ValueError("publisher_lifecycle_invalid")
         if self.position_hint not in ("above", "below", "sidebar", "between"):
             raise ValueError("publisher_position_invalid")
-        if not self.allowed_formats or any(value not in ("banner", "native") for value in self.allowed_formats):
+        if not self.allowed_formats or any(value not in ("banner", "native", "clip") for value in self.allowed_formats):
             raise ValueError("publisher_formats_invalid")
         if not self.allowed_sizes or any(not (isinstance(w, int) and isinstance(h, int) and 0 < w <= self.max_width and 0 < h <= self.max_height) for w, h in self.allowed_sizes):
             raise ValueError("publisher_sizes_invalid")

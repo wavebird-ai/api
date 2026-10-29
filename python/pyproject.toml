@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "wavebird-publisher-server"
-version = "0.1.0b1"
+version = "0.1.0b2"
 description = "Framework-neutral, server-only wavebird publisher Test integration"
 requires-python = ">=3.11"
 dependencies = []

@@ -41,7 +41,8 @@ def candidate(origin: str, project: str):
         generations.append(str(request.url))
         return Response("model result", media_type="text/plain")
 
-    return create_app(PublisherServer(config, transport), generate), calls, generations
+    return create_app(PublisherServer(config, transport), generate,
+                      lambda request: "own-session" if request.header("x-publisher-session") == "real-session" else None), calls, generations
 
 
 def call(app, origin: str, path: str, headers: dict[str, str], payload: dict | None = None):
@@ -86,27 +87,28 @@ class FastApiExampleTests(unittest.TestCase):
             with self.subTest(origin=origin):
                 app, calls, generations = candidate(origin, project)
                 headers = {"origin": origin, "x-publisher-session": "real-session"}
-                status, body = call(app, origin, "/api/wavebird/placement", headers, {"session_id": "own-session"})
+                identity = {"session_id": "own-session", "turn_id": "turn_one"}
+                status, body = call(app, origin, "/api/wavebird/placement", headers, identity)
                 self.assertEqual(status, 200)
                 self.assertFalse(json.loads(body)["decision"]["fill"])
                 self.assertEqual(len(calls), 1)
                 self.assertEqual(calls[0]["client_id"], project)
-                self.assertEqual(call(app, origin, "/api/wavebird/generate", headers)[1], b"model result")
+                self.assertEqual(call(app, origin, "/api/wavebird/generate", headers, identity)[1], b"model result")
                 self.assertEqual(len(generations), 1)
 
     def test_auth_origin_and_gpc_fail_closed_without_upstream_or_model(self):
         app, calls, generations = candidate("https://publisher.example", "wbproj_secure")
-        payload = {"session_id": "own-session"}
+        payload = {"session_id": "own-session", "turn_id": "turn_one"}
         base = {"origin": "https://publisher.example"}
         self.assertEqual(call(app, "https://publisher.example", "/api/wavebird/placement", base, payload)[0], 401)
-        self.assertEqual(call(app, "https://publisher.example", "/api/wavebird/generate", base)[0], 401)
+        self.assertEqual(call(app, "https://publisher.example", "/api/wavebird/generate", base, payload)[0], 401)
         authorized = {**base, "x-publisher-session": "real-session"}
         self.assertEqual(call(app, "https://publisher.example", "/api/wavebird/placement", {**authorized, "origin": "https://foreign.example"}, payload)[0], 403)
-        self.assertEqual(call(app, "https://publisher.example", "/api/wavebird/generate", {**authorized, "origin": "https://foreign.example"})[0], 403)
+        self.assertEqual(call(app, "https://publisher.example", "/api/wavebird/generate", {**authorized, "origin": "https://foreign.example"}, payload)[0], 403)
         self.assertEqual(call(app, "https://publisher.example", "/api/wavebird/placement", {**authorized, "sec-gpc": "1"}, payload)[0], 403)
         self.assertEqual(calls, [])
         self.assertEqual(generations, [])
-        self.assertEqual(call(app, "https://publisher.example", "/api/wavebird/generate", {**authorized, "sec-gpc": "1"})[0], 200)
+        self.assertEqual(call(app, "https://publisher.example", "/api/wavebird/generate", {**authorized, "sec-gpc": "1"}, payload)[0], 200)
         self.assertEqual(len(generations), 1, "privacy denial must not block the publisher's own model")
 
 

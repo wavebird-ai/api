@@ -7,7 +7,7 @@
   "license": "MIT",
   "repository": { "type": "git", "url": "https://github.com/wavebird-ai/api" },
   "engines": { "node": ">=20" },
-  "files": ["dist", "examples", "bin", "templates", "README.md", "LICENSE"],
+  "files": ["dist", "src", "build.mjs", "examples", "bin", "templates", "README.md", "LICENSE"],
   "bin": { "wavebird-next": "./bin/wavebird-next.mjs" },
   "exports": {
     "./server": { "types": "./dist/server.d.ts", "import": "./dist/server.js" },

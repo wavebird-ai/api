@@ -20,6 +20,8 @@ def _response(result: PublisherResponse) -> Response:
 
 def _identity(request: Request, body: bytes, session_id_for_request: Callable[[PublisherRequest], str | None]) -> tuple[str, str] | None:
     try:
+        if len(body) > 16 * 1024:
+            return None
         payload = json.loads(body)
         session = session_id_for_request(_publisher_request(request, body))
         turn = payload.get("turn_id")
@@ -28,6 +30,18 @@ def _identity(request: Request, body: bytes, session_id_for_request: Callable[[P
     except (ValueError, TypeError):
         pass
     return None
+
+
+def _consent_session_matches(request: Request, body: bytes,
+                             session_id_for_request: Callable[[PublisherRequest], str | None]) -> bool:
+    try:
+        if len(body) > 16 * 1024:
+            return False
+        payload = json.loads(body)
+        session = session_id_for_request(_publisher_request(request, body))
+        return isinstance(session, str) and bool(session) and isinstance(payload, dict) and payload.get("session_id") == session
+    except (ValueError, TypeError):
+        return False
 
 class _Turn:
     def __init__(self) -> None:
@@ -164,7 +178,10 @@ def create_app(server: PublisherServer, session_id_for_request: Callable[[Publis
 
     @app.post("/api/wavebird/consent")
     async def write_consent(request: Request) -> Response:
-        return _response(await run_in_threadpool(server.consent_post, _publisher_request(request, await request.body())))
+        body = await request.body()
+        if not _consent_session_matches(request, body, session_id_for_request):
+            return Response(status_code=401)
+        return _response(await run_in_threadpool(server.consent_post, _publisher_request(request, body)))
 
     @app.post("/api/wavebird/generate")
     async def generate(request: Request) -> Response:

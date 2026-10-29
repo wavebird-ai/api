@@ -81,6 +81,9 @@ class CoordinatedFastApiTests(unittest.TestCase):
         async def scenario():
             self.assertEqual((await call(app, "/api/wavebird/generate", identity, session=""))[0], 401)
             self.assertEqual((await call(app, "/api/wavebird/placement", identity, origin="https://foreign.example"))[0], 403)
+            self.assertEqual((await call(app, "/api/wavebird/consent", {"session_id": "browser_forged", "lifecycle_state": "granted", "revision": 1}))[0], 401)
+            self.assertEqual(len(calls), 0, "forged consent session must never reach the API")
+            self.assertEqual((await call(app, "/api/wavebird/consent", {"session_id": "server-session", "lifecycle_state": "granted", "revision": 1}))[0], 200)
             placement = await call(app, "/api/wavebird/placement", {**identity, "allowed_formats": ["native"]})
             self.assertEqual(placement[0], 200)
             self.assertEqual((await call(app, "/api/wavebird/placement", identity))[0], 409)

@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import threading
 import unittest
 
 from fastapi import Request
@@ -47,8 +48,11 @@ class CoordinatedFastApiTests(unittest.TestCase):
     def test_all_formats_one_turn_and_trusted_reports(self):
         calls = []
         generated = []
+        report_gate = threading.Event()
 
         def transport(url, body, key, timeout):
+            if "/generation/" in url:
+                report_gate.wait(2)
             calls.append((url, json.loads(body), key, timeout))
             if "/placements" in url:
                 return PublisherResponse(200, {}, b'{"job_id":"job_synthetic","decision":{"fill":false}}')
@@ -80,9 +84,20 @@ class CoordinatedFastApiTests(unittest.TestCase):
             placement = await call(app, "/api/wavebird/placement", {**identity, "allowed_formats": ["native"]})
             self.assertEqual(placement[0], 200)
             self.assertEqual((await call(app, "/api/wavebird/placement", identity))[0], 409)
-            self.assertEqual((await call(app, "/api/wavebird/generate", identity)), (200, b"model result"))
+            try:
+                self.assertEqual(
+                    await asyncio.wait_for(call(app, "/api/wavebird/generate", identity), timeout=0.8),
+                    (200, b"model result"),
+                    "report delivery must not delay the publisher model",
+                )
+            finally:
+                report_gate.set()
             self.assertEqual((await call(app, "/api/wavebird/generate", identity))[0], 409)
             self.assertEqual((await call(app, "/api/wavebird/browser.js"))[0], 200)
+            for _ in range(100):
+                if len([item for item in calls if "/generation/" in item[0]]) == 2:
+                    break
+                await asyncio.sleep(0.01)
 
         asyncio.run(scenario())
         self.assertEqual(generated, ["POST"])

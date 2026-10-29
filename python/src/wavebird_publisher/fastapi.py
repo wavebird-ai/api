@@ -37,6 +37,8 @@ class _Turn:
         self.job_id: str | None = None
         self.phase = "idle"
         self.reported: set[str] = set()
+        self.pending: list[str] = []
+        self.report_task: asyncio.Task[None] | None = None
 
 class _GenerationCoordinator:
     """Single-process Test example; use the publisher's shared store for multiple workers."""
@@ -85,9 +87,36 @@ class _GenerationCoordinator:
             events = (["started"] if turn.phase in {"started", "finished", "failed"} else []) + (
                 [turn.phase] if turn.phase in {"finished", "failed"} else [])
             for event in events:
-                if turn.job_id and event not in turn.reported:
-                    result = await run_in_threadpool(self.server.report_generation, turn.job_id, event)
-                    if result.status == 200:
+                if turn.job_id and event not in turn.reported and event not in turn.pending:
+                    turn.pending.append(event)
+            if turn.pending and (turn.report_task is None or turn.report_task.done()):
+                turn.report_task = asyncio.create_task(self._flush(key))
+
+    async def _flush(self, key: tuple[str, str]) -> None:
+        """Report in turn order without delaying or failing the publisher's model."""
+        while True:
+            async with self.lock:
+                turn = self.turns.get(key)
+                if turn is None:
+                    return
+                if not turn.pending:
+                    turn.report_task = None
+                    return
+                event = turn.pending[0]
+                job_id = turn.job_id
+            accepted = False
+            if job_id is not None:
+                try:
+                    accepted = (await run_in_threadpool(self.server.report_generation, job_id, event)).status == 200
+                except Exception:
+                    pass
+            async with self.lock:
+                turn = self.turns.get(key)
+                if turn is None:
+                    return
+                if turn.pending and turn.pending[0] == event:
+                    turn.pending.pop(0)
+                    if accepted:
                         turn.reported.add(event)
 
     async def bind(self, key: tuple[str, str], job_id: str) -> None:

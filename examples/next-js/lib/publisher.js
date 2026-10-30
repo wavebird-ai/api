@@ -31,8 +31,6 @@ export function getPublisher() {
   publisher: { app_name: "Your saved app name", app_domain: "your.example", categories: [] },
   allowedFormats: ["banner"],
   positionHint: "between",
-  maxWidth: 728,
-  maxHeight: 90,
   allowedSizes: [{ width: 728, height: 90 }, { width: 320, height: 50 }],
   responsiveSizeSelection: true
   });

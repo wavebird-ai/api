@@ -26,6 +26,12 @@ const saved = {
   blockedCategories: ["IAB25"]
 };
 
+test("unknown server configuration fields fail closed", () => {
+  assert.throws(() => createPublisherServer({ ...saved, unknownOption: true }), /publisher_option_unknown/);
+  assert.throws(() => createPublisherServer({ ...saved, publisher: { ...saved.publisher, unknownOption: true } }), /publisher_identity_invalid/);
+  assert.throws(() => createPublisherServer({ ...saved, allowedSizes: [{ width: 728, height: 90, unknownOption: true }] }), /publisher_sizes_invalid/);
+});
+
 const routeRequest = (path, body, headers = {}) => new Request(`https://publisher.example${path}`, {
   method: body === undefined ? "GET" : "POST",
   headers: { host: "publisher.example", authorization: "Session publisher", origin: "https://publisher.example", "sec-fetch-site": "same-origin", ...headers },

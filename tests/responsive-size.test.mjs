@@ -22,6 +22,44 @@ const request = (width, height = 250, headers = {}, format = "auto") => new Requ
   body: JSON.stringify({ session_id: "session_test", format, container_size: { width, height } }),
 });
 
+test("saved sizes provide the normal responsive envelope without numeric caps", async () => {
+  const { maxWidth, maxHeight, ...withoutCaps } = saved;
+  const server = createPublisherServer(withoutCaps);
+  const calls = [];
+  const old = globalThis.fetch;
+  globalThis.fetch = async (_url, init) => { calls.push(JSON.parse(init.body)); return Response.json({ decision: { fill: false }, placement: null }); };
+  try {
+    assert.equal((await server.placementPOST(request(390))).status, 200);
+    assert.deepEqual(calls[0].slot_hint.allowed_sizes, [{ width: 320, height: 50 }]);
+    assert.equal(calls[0].slot_hint.max_width, 390);
+    assert.equal(calls[0].slot_hint.max_height, 250);
+  } finally { globalThis.fetch = old; }
+});
+
+test("an advanced numeric cap narrows saved eligibility without widening it", async () => {
+  const server = createPublisherServer({ ...saved, maxWidth: 310 });
+  const calls = [];
+  const old = globalThis.fetch;
+  globalThis.fetch = async (_url, init) => { calls.push(JSON.parse(init.body)); return Response.json({ decision: { fill: false }, placement: null }); };
+  try {
+    assert.equal((await server.placementPOST(request(390))).status, 200);
+    assert.deepEqual(calls[0].slot_hint.allowed_sizes, [{ width: 300, height: 250 }]);
+    assert.equal(calls[0].slot_hint.max_width, 310);
+  } finally { globalThis.fetch = old; }
+});
+
+test("an advanced cap below every saved size returns local no-fit", async () => {
+  const server = createPublisherServer({ ...saved, maxWidth: 299 });
+  const old = globalThis.fetch;
+  globalThis.fetch = async () => { throw new Error("no upstream on no-fit"); };
+  try {
+    const result = await server.placementPOST(request(390));
+    assert.equal(result.status, 200);
+    assert.equal((await result.json()).decision.reason, "no_fit");
+    assert.equal((await server.placementPOST(request(0))).status, 400);
+  } finally { globalThis.fetch = old; }
+});
+
 test("responsive selection binds one saved size to the measured container", async () => {
   const server = createPublisherServer(saved);
   const calls = [];

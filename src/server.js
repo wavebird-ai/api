@@ -10,6 +10,11 @@ const MAX_PARALLEL_WAVEBIRD_REQUESTS = 2;
 const ID = /^[A-Za-z0-9_-]{1,128}$/;
 const JOB_ID = /^job_[A-Za-z0-9_-]{1,128}$/;
 const PLACEMENT_KEY = /^[a-z0-9][a-z0-9_-]{0,63}$/;
+const SERVER_OPTION_KEYS = new Set(["apiBaseUrl", "clientId", "secretKey", "preferenceSecret", "authorize",
+  "sessionIdForRequest", "turnJournal", "onDiagnostic", "publicOrigins", "surfaceId", "placementKey",
+  "jobType", "locale", "timing", "consentMode", "gdprApplies", "publisher", "allowedFormats",
+  "positionHint", "maxWidth", "maxHeight", "allowedSizes", "responsiveSizeSelection", "bidfloor",
+  "bidfloorCurrency", "blockedCategories"]);
 
 function response(error, status, headers = {}) {
   return Response.json({ error }, { status, headers: { "Cache-Control": "no-store", ...headers } });
@@ -17,6 +22,7 @@ function response(error, status, headers = {}) {
 
 function normalizeOptions(options) {
   if (typeof window !== "undefined") throw new Error("publisher_server_only");
+  if (options && Object.keys(options).some(key => !SERVER_OPTION_KEYS.has(key))) throw new Error("publisher_option_unknown");
   if (!options || typeof options.authorize !== "function") throw new Error("publisher_authorize_required");
   if ((options.turnJournal === undefined) !== (options.sessionIdForRequest === undefined) ||
       (options.turnJournal !== undefined && (typeof options.sessionIdForRequest !== "function" ||
@@ -30,15 +36,18 @@ function normalizeOptions(options) {
   if (!["wavebird_consent", "own_cmp"].includes(options.consentMode)) throw new Error("publisher_consent_mode_invalid");
   if (!Array.isArray(options.allowedFormats) || options.allowedFormats.length === 0 || options.allowedFormats.some(value => !["banner", "native", "clip"].includes(value))) throw new Error("publisher_formats_invalid");
   if (!["above", "below", "sidebar", "between"].includes(options.positionHint)) throw new Error("publisher_position_invalid");
-  if (!Number.isSafeInteger(options.maxWidth) || options.maxWidth < 1 || !Number.isSafeInteger(options.maxHeight) || options.maxHeight < 1) throw new Error("publisher_envelope_invalid");
-  if (!Array.isArray(options.allowedSizes) || options.allowedSizes.length === 0 || options.allowedSizes.some(size => !Number.isSafeInteger(size.width) || !Number.isSafeInteger(size.height) || size.width < 1 || size.height < 1 || size.width > options.maxWidth || size.height > options.maxHeight ||
+  if (!Array.isArray(options.allowedSizes) || options.allowedSizes.length === 0 || options.allowedSizes.some(size => !size || typeof size !== "object" || Object.keys(size).some(key => !["width", "height", "formats"].includes(key)) || !Number.isSafeInteger(size.width) || !Number.isSafeInteger(size.height) || size.width < 1 || size.height < 1 ||
     (size.formats !== undefined && (!Array.isArray(size.formats) || size.formats.length === 0 || size.formats.some(format => !options.allowedFormats.includes(format)))))) throw new Error("publisher_sizes_invalid");
+  const maxWidth = options.maxWidth === undefined ? options.allowedSizes.reduce((max, size) => Math.max(max, size.width), 0) : options.maxWidth;
+  const maxHeight = options.maxHeight === undefined ? options.allowedSizes.reduce((max, size) => Math.max(max, size.height), 0) : options.maxHeight;
+  if (!Number.isSafeInteger(maxWidth) || maxWidth < 1 || !Number.isSafeInteger(maxHeight) || maxHeight < 1) throw new Error("publisher_envelope_invalid");
+  const eligibleSizes = options.allowedSizes.filter(size => size.width <= maxWidth && size.height <= maxHeight);
   const hasFloor = Object.hasOwn(options, "bidfloor");
   const hasCurrency = Object.hasOwn(options, "bidfloorCurrency");
   if (hasFloor !== hasCurrency || (hasFloor && (!Number.isFinite(options.bidfloor) || options.bidfloor < 0 || typeof options.bidfloorCurrency !== "string" || !/^[A-Za-z]{3}$/.test(options.bidfloorCurrency))))
     throw new Error("publisher_bidfloor_override_invalid");
   if (options.responsiveSizeSelection !== undefined && typeof options.responsiveSizeSelection !== "boolean") throw new Error("publisher_responsive_selection_invalid");
-  if (!options.publisher || typeof options.publisher.app_name !== "string" || typeof options.publisher.app_domain !== "string" || !Array.isArray(options.publisher.categories)) throw new Error("publisher_identity_invalid");
+  if (!options.publisher || typeof options.publisher !== "object" || Object.keys(options.publisher).some(key => !["app_name", "app_domain", "categories"].includes(key)) || typeof options.publisher.app_name !== "string" || typeof options.publisher.app_domain !== "string" || !Array.isArray(options.publisher.categories)) throw new Error("publisher_identity_invalid");
   if (typeof options.jobType !== "string" || !options.jobType || typeof options.locale !== "string" || !options.locale) throw new Error("publisher_job_invalid");
   const base = String(options.apiBaseUrl || "https://api.wavebird.ai").trim().replace(/\/+$/, "").replace(/\/v1$/, "") + "/v1";
   if (!/^https:\/\//.test(base)) throw new Error("publisher_api_https_required");
@@ -52,7 +61,8 @@ function normalizeOptions(options) {
     }
     if (new Set(options.publicOrigins).size !== options.publicOrigins.length) throw new Error("publisher_public_origins_invalid");
   }
-  return { ...options, base, consentSource: options.consentMode === "wavebird_consent" ? "wavebird_consent" : "wrapper_cmp" };
+  return { ...options, allowedSizes: eligibleSizes, maxWidth, maxHeight, base,
+    consentSource: options.consentMode === "wavebird_consent" ? "wavebird_consent" : "wrapper_cmp" };
 }
 
 function publicOrigin(request, options) {
@@ -279,6 +289,7 @@ export function createPublisherServer(inputOptions) {
     let allowedFormats = options.allowedFormats;
     let maxWidth = options.maxWidth;
     let maxHeight = options.maxHeight;
+    const noFit = () => Response.json({ decision: { fill: false, reason: "no_fit" }, placement: null }, { headers: { "Cache-Control": "no-store" } });
     if (options.responsiveSizeSelection !== false) {
       const bounds = input?.container_size;
       if (!bounds || !Number.isSafeInteger(bounds.width) || !Number.isSafeInteger(bounds.height) ||
@@ -287,10 +298,11 @@ export function createPublisherServer(inputOptions) {
       }
       const requestedFormat = input?.format ?? "auto";
       if (requestedFormat !== "auto" && !options.allowedFormats.includes(requestedFormat)) return response("publisher_format_invalid", 400);
+      if (allowedSizes.length === 0) return noFit();
       const fitting = options.allowedSizes.filter(size => size.width <= bounds.width && size.height <= bounds.height &&
         (requestedFormat === "auto" || (size.formats ?? options.allowedFormats).includes(requestedFormat)))
         .sort((a, b) => b.width - a.width || b.height - a.height);
-      if (fitting.length === 0) return Response.json({ decision: { fill: false, reason: "no_fit" }, placement: null }, { headers: { "Cache-Control": "no-store" } });
+      if (fitting.length === 0) return noFit();
       const selected = fitting[0];
       allowedSizes = [{ width: selected.width, height: selected.height }];
       allowedFormats = requestedFormat === "auto"
@@ -299,6 +311,7 @@ export function createPublisherServer(inputOptions) {
       maxWidth = Math.min(maxWidth, bounds.width);
       maxHeight = Math.min(maxHeight, bounds.height);
     }
+    else if (allowedSizes.length === 0) return noFit();
     if (turn) {
       let claimed;
       try { claimed = await journalCall(() => options.turnJournal.claimPlacement(turn)); }

@@ -51,8 +51,9 @@ export type PublisherServerOptions = {
   publisher: { app_name: string; app_domain: string; categories: string[] };
   allowedFormats: Array<"banner" | "native" | "clip">;
   positionHint: "above" | "below" | "sidebar" | "between";
-  maxWidth: number;
-  maxHeight: number;
+  /** Optional advanced caps; saved allowedSizes determine the normal envelope. */
+  maxWidth?: number;
+  maxHeight?: number;
   allowedSizes: Array<{ width: number; height: number; formats?: Array<"banner" | "native" | "clip"> }>;
   responsiveSizeSelection?: boolean;
   bidfloor?: number;

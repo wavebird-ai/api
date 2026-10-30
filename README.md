@@ -1,37 +1,81 @@
-# wavebird publisher API
+# @wavebirdai/api
 
-`@wavebirdai/api` provides Banner, Native and Clip integration with the Wavebird REST API and hosted renderer. The pinned public GitHub `.4` and optional `.5` archives, and npm `0.1.0-beta.1`, support Banner and Native; npm beta.2 adds Clip. GitHub `.5` and npm versions are independent. Install only a version currently offered for your project in Dashboard Overview. Existing publishers keep their installed version unless they opt in. The established [`wavebird`](https://www.npmjs.com/package/wavebird) SDK remains separate.
+Add Wavebird Banner, Native, and Clip placements to an authenticated chat app. The package provides server handlers for placement, consent, and generation reporting, plus a browser adapter for the hosted renderer. Your server keeps the Wavebird key; your app keeps control of its login, model stream, layout, and consent choice.
 
-## Installation
+## Integrate with Next.js
 
-Use the exact available package version and install command shown in Dashboard Overview for your saved project.
+You need a saved Wavebird Test project and placement in Dashboard, a Server Test Key, an existing authenticated Next.js App Router app, and a durable turn store. Start with the placement's saved formats, sizes, timing, and consent mode. Test traffic is nonpayable.
 
-The public `.4` GitHub asset uses fixed sizes. Public `.5` adds optional responsive selection. A version change does not migrate an existing integration automatically.
+1. Install the package and generate the route files for your app directory:
 
-The [full REST reference](https://wavebird.ai/api/reference/endpoints) remains available for integrations without this package.
+   ```sh
+   npm install @wavebirdai/api@0.1.0-beta.4
+   ./node_modules/.bin/wavebird-next init --lang ts --root . --app-dir src/app
+   ```
 
-Both JavaScript and TypeScript use the same package and URL; there is no separate language package.
+   Use `--lang js --app-dir app` for a JavaScript app with `app/` at the project root. The generator adds files without overwriting existing ones and writes `WAVEBIRD-SETUP.md` with the exact connection points.
 
-For a saved single-format placement such as Clip-only After, pass `getFormat: () => "clip"` to `createPublisherAds` along with the matching same-origin placement endpoint. The package forwards that choice to the hosted renderer; the server still enforces the saved project and format. Omit `getFormat` when the saved placement intentionally lets wavebird choose among supported formats.
+2. Set the server-only values in your deployment environment:
 
-## Next.js route generator
+   ```dotenv
+   WAVEBIRD_CLIENT_ID=<saved-project-id>
+   WAVEBIRD_SECRET_KEY=<server-test-key>
+   WAVEBIRD_PREFERENCE_SECRET=<stable-random-value-at-least-32-bytes>
+   WAVEBIRD_PUBLIC_ORIGINS=https://your-app.example
+   ```
 
-After installing the package, run one of these commands in an existing Next.js App Router project:
+   `WAVEBIRD_PUBLIC_ORIGINS` must contain each exact app origin, including scheme and port. For local Server Test-key work, add the exact loopback origin to this list while keeping the Dashboard project domain at its real HTTPS host. Never expose the server key or preference secret through `NEXT_PUBLIC_`, client props, or source control.
 
-```sh
-./node_modules/.bin/wavebird-next init --lang js --root . --app-dir app
-./node_modules/.bin/wavebird-next init --lang ts --root . --app-dir src/app
-```
+3. Connect the generated files to your app: copy the **saved** placement settings into `lib/publisher`; have `lib/auth` validate the real logged-in request and return a stable, non-credential session ID; replace `lib/turn-store` with your persistent store; and connect `lib/model` to your existing generation stream. The supplied auth, store, and model hooks fail closed until you do this. If you use PostgreSQL, the provided adapter uses your existing pool and its `install()` belongs in your normal migration step.
 
-Choose one language and the actual App Router directory. The command refuses to overwrite existing files. It installs `lib/publisher`, `lib/auth`, a fail-closed `lib/turn-store` and `lib/model`; required `app/api/generate`, `app/api/sponsor-slot`, `app/api/sponsor-consent` and `app/api/sponsor-session` route files; `components/WavebirdPlacement`; and `WAVEBIRD-SETUP.md`. The `src/app` option puts `lib` and `components` under `src/`. These routes are application files produced by the generator, not implicit package exports. JS and TS Next.js example files are also included in the package's `examples/` directory; connect their authorization, durable store and generation hooks before use. The generated publisher lists two illustrative Banner sizes and enables responsive selection; replace both sizes with the exact saved project sizes before Test traffic.
+   The generated server route keeps the Wavebird key on the server and wraps your existing stream:
 
-Set the server-only environment variables, including `WAVEBIRD_PUBLIC_ORIGINS` with the exact scheme, host, and port where your app is opened. Keep the Dashboard project domain at its real HTTPS host; for local Server Test-key testing, add the exact loopback origin to this server-only list without changing that project domain. Browser Test Keys have a separate Allowed origins field in API Keys. Insert actual saved Dashboard settings in `lib/publisher`, connect your real session check in `lib/auth`, replace the fail-closed turn store with an adapter to your existing durable database, and connect your existing model stream in `lib/model`. The supplied auth hook requires a publisher-owned 204 check with a non-credential `x-publisher-session-id` response header. The generated store fails closed and model hook throws until connected. Keep `WAVEBIRD_PREFERENCE_SECRET` stable across restarts; the package derives a separate journal key from it. The generated client component requires authenticated user and conversation IDs from the publisher and retrieves the same non-credential session ID through a same-origin route. Mount it by the existing result area and call its returned ads object's `connectGeneration` around the existing request/stream consumer. The generated setup file shows the short entry point. Use your real consent lifecycle: the template selects wavebird's consent dialog, while an `own_cmp` saved project must be wired to the publisher's actual CMP before any served test.
+   ```ts
+   import { getPublisher } from "../../../lib/publisher";
+   import { existingGeneration } from "../../../lib/model";
+
+   export async function POST(request: Request): Promise<Response> {
+     return getPublisher().withGeneration({ request, run: existingGeneration });
+   }
+   ```
+
+4. Mount the generated `WavebirdPlacement` beside your app's result area using real authenticated user and conversation IDs, then wrap the existing generation request:
+
+   ```tsx
+   <WavebirdPlacement
+     clientId={publicProjectId}
+     userId={authenticatedUserId}
+     conversationId={activeConversationId}
+     onReady={setAds}
+   />
+
+   await ads.connectGeneration({
+     signal,
+     request: headers => fetch("/api/generate", { method: "POST", headers, signal }),
+     consume: async (response, lifecycle) => {
+       if (!response.ok || !response.body) throw new Error("generation_unavailable");
+       const reader = response.body.getReader();
+       while (true) {
+         const next = await reader.read();
+         if (next.done) break;
+         // Forward next.value to your existing stream consumer.
+         lifecycle.onDelta();
+       }
+     },
+   });
+   ```
+
+   The generated `WAVEBIRD-SETUP.md` shows where the component and routes go. Use Wavebird's consent dialog only when that matches the saved project; for `own_cmp`, connect your actual CMP lifecycle.
+
+5. Validate in Test: confirm the saved format and size, consent and GPC behavior, No-Fill, Stop/abort, and late responses. The generation result must continue independently of the ad path. Move to another package version or Live only through your normal project approval process.
+
+JavaScript and TypeScript use this same package. Complete Next.js JavaScript and TypeScript examples are included in `node_modules/@wavebirdai/api/examples/next-js` and `node_modules/@wavebirdai/api/examples/next-ts`. For other frameworks, use the explicit `@wavebirdai/api/server` and `@wavebirdai/api/browser` exports described below. The [REST reference](https://wavebird.ai/api/reference/endpoints) covers integrations without this package. The established [`wavebird`](https://www.npmjs.com/package/wavebird) SDK is a separate package.
 
 ## Server and browser boundary
 
 `@wavebirdai/api/server` exports `createPublisherServer`. Configure it with server-only Project ID, Server Test or production Key, preference signing secret, the publisher's real request authorization function, exact `publicOrigins`, and the saved project/placement values shown in the dashboard. The origin list is required. The package compares the browser Origin with a configured public origin whose host matches the route Host, even when Next.js or a proxy gives the route an internal URL. `localhost` and `127.0.0.1` are separate origins, and each port and scheme must match exactly; HTTP loopback is available only with a Server Test Key. A production key also requires its separately approved project and Wavebird server authority. Omit `bidfloor` and `bidfloorCurrency` to inherit saved pricing. An explicit override supplies both a nonnegative amount, including zero, and a three-letter currency; the API validates it against the saved project. It returns authenticated `placementPOST`, `consentGET`, `consentPOST`, and `withGeneration` handlers, plus the server-only `reportGeneration(jobId, event)` method. The helper constructs the existing `/v1/placements`, `/v1/consent`, and `/v1/jobs/{id}/generation/{event}` requests; it does not introduce a new Wavebird protocol. The Wavebird API remains authoritative for saved scope, creative formats, duration, fallback, and financial classification.
 
-Responsive size selection is enabled by default in this version. The browser adapter sends the measured reserved container size. The server chooses one of the saved `allowedSizes` that fits, or returns `no_fit` without an upstream placement request. Numeric `maxWidth` and `maxHeight` are optional advanced caps: when omitted, the saved sizes define the envelope; when supplied, they can only narrow eligible sizes. A size can carry `formats: ["banner"]`, `formats: ["native"]`, `formats: ["clip"]`, or an approved combination; this annotation remains on the publisher server and is stripped from the wavebird request. A browser format preference is accepted only when it is among the saved `allowedFormats` and compatible with the selected size. Set `responsiveSizeSelection: false` only for a deliberate fixed-size compatibility integration; published `.4` and `.5` bytes keep their former defaults. Reserve enough height for the selected creative and its controls; do not stretch the returned creative or place it over the model result.
+Responsive size selection is enabled by default in this version. The browser adapter sends the measured reserved container size. The server chooses one of the saved `allowedSizes` that fits, or returns `no_fit` without an upstream placement request. Numeric `maxWidth` and `maxHeight` are optional advanced caps: when omitted, the saved sizes define the envelope; when supplied, they can only narrow eligible sizes. A size can carry `formats: ["banner"]`, `formats: ["native"]`, `formats: ["clip"]`, or an approved combination; this annotation remains on the publisher server and is stripped from the wavebird request. A browser format preference is accepted only when it is among the saved `allowedFormats` and compatible with the selected size. Set `responsiveSizeSelection: false` only for a deliberate fixed-size compatibility integration. Reserve enough height for the selected creative and its controls; do not stretch the returned creative or place it over the model result.
 
 Create the server helper when a request arrives, as the included Next.js examples do. This lets Next.js build a publisher app without loading its server key into the build process; the helper still validates configuration before handling traffic.
 

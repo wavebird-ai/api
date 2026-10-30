@@ -13,6 +13,27 @@ from .assets import browser_module_bytes
 from .turn_journal import SqliteTurnJournal
 
 _TURN = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
+_MAX_BODY_BYTES = 16 * 1024
+
+
+async def _bounded_body(request: Request) -> bytes | None:
+    """Stop reading at the package's request limit before Starlette joins the body."""
+    declared = request.headers.get("content-length")
+    if declared:
+        try:
+            if int(declared) > _MAX_BODY_BYTES:
+                return None
+        except ValueError:
+            pass  # The streamed byte count remains authoritative.
+    chunks = bytearray()
+    async for chunk in request.stream():
+        if len(chunks) + len(chunk) > _MAX_BODY_BYTES:
+            return None
+        chunks.extend(chunk)
+    body = bytes(chunks)
+    # Existing publisher generation handlers may call request.body() again.
+    request._body = body
+    return body
 
 def _publisher_request(request: Request, body: bytes = b"") -> PublisherRequest:
     return PublisherRequest(str(request.url), request.method, dict(request.headers), body)
@@ -181,7 +202,9 @@ def mount_fastapi(app: FastAPI, server: PublisherServer,
 
     @app.post("/api/wavebird/placement")
     async def placement(request: Request) -> Response:
-        body = await request.body()
+        body = await _bounded_body(request)
+        if body is None:
+            return Response(status_code=413)
         identity = _identity(request, body, session_id_for_request)
         if identity is None:
             return Response(status_code=401)
@@ -229,14 +252,18 @@ def mount_fastapi(app: FastAPI, server: PublisherServer,
 
     @app.post("/api/wavebird/consent")
     async def write_consent(request: Request) -> Response:
-        body = await request.body()
+        body = await _bounded_body(request)
+        if body is None:
+            return Response(status_code=413)
         if not _consent_session_matches(request, body, session_id_for_request):
             return Response(status_code=401)
         return _response(await run_in_threadpool(server.consent_post, _publisher_request(request, body)))
 
     @app.post("/api/wavebird/generate")
     async def generate(request: Request) -> Response:
-        body = await request.body()
+        body = await _bounded_body(request)
+        if body is None:
+            return Response(status_code=413)
         denied = server.authorize_generation(_publisher_request(request, body))
         if denied is not None:
             return _response(denied)

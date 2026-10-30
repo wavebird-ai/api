@@ -248,7 +248,11 @@ def mount_fastapi(app: FastAPI, server: PublisherServer,
 
     @app.get("/api/wavebird/consent")
     async def read_consent(request: Request) -> Response:
-        return _response(await run_in_threadpool(server.consent_get, _publisher_request(request)))
+        publisher_request = _publisher_request(request)
+        session_id = session_id_for_request(publisher_request)
+        if not isinstance(session_id, str) or not session_id:
+            return Response(status_code=401)
+        return _response(await run_in_threadpool(server.consent_get, publisher_request, session_id))
 
     @app.post("/api/wavebird/consent")
     async def write_consent(request: Request) -> Response:

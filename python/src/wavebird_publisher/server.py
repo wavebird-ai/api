@@ -258,22 +258,21 @@ class PublisherServer:
     def _cookie_name(self) -> str:
         return "wb_choice_" + hashlib.sha256((self.config.client_id + ":" + self.config.surface_id).encode()).hexdigest()[:16]
 
-    def _sign(self, origin: str, state: str) -> str:
+    def _sign(self, origin: str, state: str, revision: int, session_id: str,
+              expires_at: int | None = None) -> str:
         now = int(time.time() * 1000)
-        payload = {**self._scope(origin), "state": state, "issued_at": now, "expires_at": now + _TTL * 1000}
+        expiry = expires_at if expires_at is not None else now + _TTL * 1000
+        payload = {**self._scope(origin), "state": state, "revision": revision,
+                   "session_binding": hashlib.sha256(session_id.encode()).hexdigest(),
+                   "issued_at": now, "expires_at": expiry}
         encoded = self._b64(json.dumps(payload, separators=(",", ":")).encode())
         signature = self._b64(hmac.new(self.config.preference_secret.encode(), encoded.encode(), hashlib.sha256).digest())
-        return f"{self._cookie_name()}={encoded}.{signature}; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age={_TTL}"
+        max_age = max(0, (expiry - now) // 1000)
+        return f"{self._cookie_name()}={encoded}.{signature}; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age={max_age}"
 
-    def consent_get(self, request: PublisherRequest) -> PublisherResponse:
-        headers = {"Vary": "Cookie, Sec-GPC"}
-        if not self._authorized(request):
-            return self._reply(401, {"error": "authentication_required"}, headers)
-        origin = self._origin(request, strict=False)
-        if origin is None:
-            return self._reply(403, {"error": "invalid_origin"}, headers)
-        if self._gpc(request):
-            return self._reply(200, {"preference": None}, headers)
+    def _preference(self, request: PublisherRequest, origin: str, session_id: str) -> dict | None:
+        if not session_id:
+            return None
         name = self._cookie_name() + "="
         value = next((part.strip()[len(name):] for part in request.header("cookie").split(";") if part.strip().startswith(name)), "")
         try:
@@ -285,11 +284,32 @@ class PublisherServer:
                 raise ValueError()
             record = json.loads(base64.urlsafe_b64decode(encoded + "=" * (-len(encoded) % 4)))
             now = int(time.time() * 1000)
-            if any(record.get(key) != val for key, val in self._scope(origin).items()) or record.get("state") not in _STATES - {"cmp_error"} or not record.get("issued_at", 0) <= now < record.get("expires_at", 0) or record["expires_at"] - record["issued_at"] != _TTL * 1000:
+            if (any(record.get(key) != val for key, val in self._scope(origin).items()) or
+                record.get("session_binding") != hashlib.sha256(session_id.encode()).hexdigest() or
+                record.get("state") not in _STATES - {"cmp_error"} or
+                type(record.get("revision")) is not int or record["revision"] < 1 or
+                type(record.get("issued_at")) is not int or type(record.get("expires_at")) is not int or
+                not record["issued_at"] <= now < record["expires_at"] or
+                not 0 < record["expires_at"] - record["issued_at"] <= _TTL * 1000):
                 raise ValueError()
-            return self._reply(200, {"preference": {"state": record["state"], "expires_at": record["expires_at"]}}, headers)
+            return record
         except (ValueError, KeyError, TypeError):
+            return None
+
+    def consent_get(self, request: PublisherRequest, session_id: str | None = None) -> PublisherResponse:
+        headers = {"Vary": "Cookie, Sec-GPC"}
+        if not self._authorized(request):
+            return self._reply(401, {"error": "authentication_required"}, headers)
+        origin = self._origin(request, strict=False)
+        if origin is None:
+            return self._reply(403, {"error": "invalid_origin"}, headers)
+        if self._gpc(request):
             return self._reply(200, {"preference": None}, headers)
+        record = self._preference(request, origin, session_id or "")
+        if record is None:
+            return self._reply(200, {"preference": None}, headers)
+        return self._reply(200, {"preference": {"state": record["state"], "revision": record["revision"],
+                                               "expires_at": record["expires_at"]}}, headers)
 
     def consent_post(self, request: PublisherRequest) -> PublisherResponse:
         if not self._authorized(request):
@@ -300,27 +320,45 @@ class PublisherServer:
         if self._gpc(request):
             return self._reply(403, {"error": "privacy_signal_policy_required"})
         data = self._input(request)
-        if not data or not isinstance(data.get("session_id"), str) or not data["session_id"].strip() or data.get("lifecycle_state") not in _STATES or type(data.get("revision")) is not int or data["revision"] < 1:
+        if not data or not isinstance(data.get("session_id"), str) or not data["session_id"].strip() or data.get("lifecycle_state") not in _STATES or ("revision" in data and (type(data["revision"]) is not int or data["revision"] < 1)):
             return self._reply(400, {"error": "consent_input_invalid"})
         if any(key in data for key in ("tcf_string", "gpp_string", "gpp_sections")):
             return self._reply(400, {"error": "external_consent_protocol_requires_policy"})
+        session_id = data["session_id"].strip()
+        preference = self._preference(request, origin, session_id)
+        if data.get("remember_for_30_days") is False:
+            if (preference is None or preference["state"] != "granted" or
+                data["lifecycle_state"] != "granted" or
+                data.get("revision") != preference["revision"] + 1):
+                return self._reply(409, {"error": "consent_state_conflict"})
         config = self.config
-        result = self._upstream("/consent", {"client_id": config.client_id, "session_id": data["session_id"].strip(),
+        upstream = {"client_id": config.client_id, "session_id": session_id,
             "decision": "custom" if config.consent_mode == "wavebird_consent" else "basic",
             "source": "wavebird_dialog" if config.consent_mode == "wavebird_consent" else "publisher_custom",
-            "lifecycle_state": data["lifecycle_state"], "revision": data["revision"],
-            "purposes": {"semantic_targeting": False, "session_persistence": False, "cross_session_persistence": False, "prompt_shared": False}})
+            "lifecycle_state": data["lifecycle_state"],
+            "purposes": {"semantic_targeting": False, "session_persistence": False, "cross_session_persistence": False, "prompt_shared": False}}
+        if "revision" in data:
+            upstream["revision"] = data["revision"]
+        result = self._upstream("/consent", upstream)
         headers = dict(result.headers)
         if data.get("remember_for_30_days") is True:
             headers["Set-Cookie"] = f"{self._cookie_name()}=; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=0"
-            if result.status == 200 and data["lifecycle_state"] != "cmp_error":
-                try:
-                    snapshot = result.json()["authoritative_consent"]
-                    if snapshot["lifecycle_state"] != data["lifecycle_state"] or snapshot["revision"] != data["revision"]:
-                        return self._reply(502, {"error": "consent_snapshot_invalid"}, headers)
-                    headers["Set-Cookie"] = self._sign(origin, data["lifecycle_state"])
-                except (ValueError, KeyError, TypeError):
-                    return self._reply(502, {"error": "consent_snapshot_invalid"}, headers)
+        if result.status == 200:
+            try:
+                snapshot = result.json()["authoritative_consent"]
+                revision = snapshot["revision"]
+                if (snapshot["lifecycle_state"] != data["lifecycle_state"] or
+                    type(revision) is not int or revision < 1 or
+                    ("revision" in data and revision != data["revision"])):
+                    raise ValueError()
+                if data["lifecycle_state"] != "cmp_error":
+                    if data.get("remember_for_30_days") is True:
+                        headers["Set-Cookie"] = self._sign(origin, data["lifecycle_state"], revision, session_id)
+                    elif data.get("remember_for_30_days") is False and preference is not None:
+                        headers["Set-Cookie"] = self._sign(origin, data["lifecycle_state"], revision,
+                                                            session_id, preference["expires_at"])
+            except (ValueError, KeyError, TypeError):
+                return self._reply(502, {"error": "consent_snapshot_invalid"}, headers)
         return PublisherResponse(result.status, headers, result.body)
 
     def authorize_generation(self, request: PublisherRequest) -> PublisherResponse | None:

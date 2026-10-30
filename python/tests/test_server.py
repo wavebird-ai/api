@@ -153,11 +153,84 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(denied.status, 200)
         self.assertEqual(calls[-1][1]["purposes"], {"semantic_targeting": False, "session_persistence": False, "cross_session_persistence": False, "prompt_shared": False})
         cookie = denied.headers["Set-Cookie"].split(";", 1)[0]
-        restored = server.consent_get(request(origin, headers={"Cookie": cookie}, method="GET"))
+        restored = server.consent_get(request(origin, headers={"Cookie": cookie}, method="GET"), "s")
         self.assertEqual(restored.json()["preference"]["state"], "denied")
-        self.assertIsNone(server.consent_get(request(origin, headers={"Cookie": cookie + "tampered"}, method="GET")).json()["preference"])
-        self.assertIsNone(server.consent_get(request(origin, headers={"Cookie": cookie, "Sec-GPC": "1"}, method="GET")).json()["preference"])
+        self.assertEqual(restored.json()["preference"]["revision"], 1)
+        self.assertIsNone(server.consent_get(request(origin, headers={"Cookie": cookie + "tampered"}, method="GET"), "s").json()["preference"])
+        self.assertIsNone(server.consent_get(request(origin, headers={"Cookie": cookie, "Sec-GPC": "1"}, method="GET"), "s").json()["preference"])
+        self.assertIsNone(server.consent_get(request(origin, headers={"Cookie": cookie}, method="GET"), "another-session").json()["preference"])
         self.assertEqual(server.consent_post(request(origin, {"session_id": "s", "lifecycle_state": "granted", "revision": 1, "tcf_string": "unsupported"})).status, 400)
+        before = len(calls)
+        self.assertEqual(server.consent_post(request(origin, {"session_id": "s", "lifecycle_state": "granted",
+                                                              "revision": 2, "remember_for_30_days": False})).status, 409)
+        self.assertEqual(len(calls), before)
+
+    def test_explicit_choice_and_reload_use_authoritative_revision_without_replay(self):
+        origin = "https://publisher-one.example"
+        stored = {"revision": 4, "state": "granted"}
+        calls = []
+
+        def transport(url, body, key, timeout):
+            self.assertTrue(url.endswith("/consent"))
+            payload = json.loads(body)
+            calls.append(payload)
+            revision = payload.get("revision", stored["revision"] + 1)
+            if revision <= stored["revision"]:
+                return PublisherResponse(409, {}, b'{"error":"consent_state_conflict"}')
+            stored.update(revision=revision, state=payload["lifecycle_state"])
+            return PublisherResponse(200, {"Content-Type": "application/json"},
+                                     json.dumps({"authoritative_consent": {
+                                         "lifecycle_state": stored["state"], "revision": revision,
+                                         "expires_at_ms": 9999999999999}}).encode())
+
+        server = PublisherServer(config(), transport)
+        # A fresh, explicit user choice uses CSL's server-side monotonic allocator.
+        choice = server.consent_post(request(origin, {"session_id": "s", "lifecycle_state": "granted",
+                                                       "remember_for_30_days": True}))
+        self.assertEqual(choice.status, 200)
+        self.assertNotIn("revision", calls[-1])
+        self.assertEqual(choice.json()["authoritative_consent"]["revision"], 5)
+        cookie = choice.headers["Set-Cookie"].split(";", 1)[0]
+        preference = server.consent_get(request(origin, headers={"Cookie": cookie}, method="GET"), "s").json()["preference"]
+        self.assertEqual(preference["revision"], 5)
+
+        # Automatic restoration submits exactly the next signed revision.
+        restored = server.consent_post(request(origin, {"session_id": "s", "lifecycle_state": "granted",
+                                                         "revision": 6, "remember_for_30_days": False},
+                                               {"Cookie": cookie}))
+        self.assertEqual(restored.status, 200)
+        self.assertEqual(calls[-1]["revision"], 6)
+        renewed_cookie = restored.headers["Set-Cookie"].split(";", 1)[0]
+        renewed = server.consent_get(request(origin, headers={"Cookie": renewed_cookie}, method="GET"), "s").json()["preference"]
+        self.assertEqual(renewed["revision"], 6)
+        self.assertEqual(renewed["expires_at"], preference["expires_at"], "reload must not extend retention")
+
+        prior_calls = len(calls)
+        stale = server.consent_post(request(origin, {"session_id": "s", "lifecycle_state": "granted",
+                                                      "revision": 6, "remember_for_30_days": False},
+                                            {"Cookie": cookie}))
+        self.assertEqual(stale.status, 409)
+        self.assertEqual(len(calls), prior_calls + 1, "CSL must reject a stale but correctly signed revision")
+        prior_calls = len(calls)
+        tampered = server.consent_post(request(origin, {"session_id": "s", "lifecycle_state": "granted",
+                                                         "revision": 7, "remember_for_30_days": False},
+                                               {"Cookie": renewed_cookie + "tampered"}))
+        self.assertEqual(tampered.status, 409)
+        self.assertEqual(len(calls), prior_calls)
+        self.assertIsNone(server.consent_get(request(origin, headers={"Cookie": cookie}, method="GET"), "other-session").json()["preference"])
+        self.assertEqual(server.consent_post(request(origin, {"session_id": "s", "lifecycle_state": "granted",
+                                                                "revision": 7, "remember_for_30_days": False},
+                                                      {"Cookie": renewed_cookie, "Origin": "https://foreign.example"})).status, 403)
+        self.assertEqual(len(calls), prior_calls)
+
+    def test_invalid_authoritative_snapshot_never_creates_preference(self):
+        origin = "https://publisher-one.example"
+        server = PublisherServer(config(), lambda *_: PublisherResponse(
+            200, {}, b'{"authoritative_consent":{"lifecycle_state":"granted","revision":0}}'))
+        response = server.consent_post(request(origin, {"session_id": "s", "lifecycle_state": "granted",
+                                                         "remember_for_30_days": True}))
+        self.assertEqual(response.status, 502)
+        self.assertIn("Max-Age=0", response.headers["Set-Cookie"])
 
     def test_no_fill_timeout_report_and_generation_guard(self):
         origin = "https://publisher-one.example"

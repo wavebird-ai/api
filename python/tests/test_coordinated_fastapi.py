@@ -15,7 +15,8 @@ from wavebird_publisher.fastapi import create_app
 ORIGIN = "https://publisher.example"
 
 
-async def call(app, path: str, body: dict | None = None, *, session: str = "valid", origin: str = ORIGIN):
+async def call(app, path: str, body: dict | None = None, *, session: str = "valid",
+               origin: str = ORIGIN, cookie: str = "", include_headers: bool = False):
     raw = json.dumps(body).encode() if body is not None else b""
     events = []
     delivered = False
@@ -36,15 +37,62 @@ async def call(app, path: str, body: dict | None = None, *, session: str = "vali
         "raw_path": path.encode(), "query_string": b"", "root_path": "",
         "server": ("publisher.example", 443), "client": ("127.0.0.1", 1),
         "headers": [(b"host", b"publisher.example"), (b"origin", origin.encode()),
-                    (b"sec-fetch-site", b"same-origin"), (b"x-publisher-session", session.encode())],
+                    (b"sec-fetch-site", b"same-origin"), (b"x-publisher-session", session.encode()),
+                    (b"cookie", cookie.encode())],
     }
     await asyncio.wait_for(app(scope, receive, send), timeout=3)
     status = next(event["status"] for event in events if event["type"] == "http.response.start")
     content = b"".join(event.get("body", b"") for event in events if event["type"] == "http.response.body")
+    if include_headers:
+        headers = dict(next(event["headers"] for event in events if event["type"] == "http.response.start"))
+        return status, content, headers
     return status, content
 
 
 class CoordinatedFastApiTests(unittest.TestCase):
+    def test_actual_cookie_producer_and_authenticated_restore_route(self):
+        current = 4
+        def transport(url, body, key, timeout):
+            nonlocal current
+            payload = json.loads(body)
+            current = payload.get("revision", current + 1)
+            return PublisherResponse(200, {}, json.dumps({"authoritative_consent": {
+                "lifecycle_state": payload["lifecycle_state"], "revision": current,
+                "expires_at_ms": 9999999999999,
+            }}).encode())
+
+        config = PublisherConfig(
+            client_id="wbproj_synthetic", server_test_key="sk_test_synthetic_server_only",
+            preference_secret="synthetic-preference-secret-32-bytes", public_origins=(ORIGIN,),
+            surface_id="assistant", placement_key="default", job_type="chat", locale="en-US",
+            timing="after", consent_mode="wavebird_consent", publisher_name="Synthetic",
+            publisher_domain="publisher.example", allowed_formats=("banner",),
+            allowed_sizes=((320, 50),), position_hint="between",
+            authorize=lambda request: request.header("x-publisher-session") == "valid",
+        )
+        app = create_app(PublisherServer(config, transport),
+                         lambda request: "server-session" if request.header("x-publisher-session") == "valid" else None,
+                         lambda request: Response("model"))
+
+        async def scenario():
+            status, body, headers = await call(app, "/api/wavebird/consent",
+                                               {"session_id": "server-session", "lifecycle_state": "granted",
+                                                "remember_for_30_days": True}, include_headers=True)
+            self.assertEqual(status, 200)
+            self.assertEqual(json.loads(body)["authoritative_consent"]["revision"], 5)
+            cookie = headers[b"set-cookie"].decode().split(";", 1)[0]
+            self.assertEqual((await call(app, "/api/wavebird/consent", cookie=cookie, session=""))[0], 401)
+            status, body = await call(app, "/api/wavebird/consent", cookie=cookie)
+            self.assertEqual(status, 200)
+            self.assertEqual(json.loads(body)["preference"]["revision"], 5)
+            status, _, _ = await call(app, "/api/wavebird/consent",
+                                      {"session_id": "server-session", "lifecycle_state": "granted",
+                                       "revision": 6, "remember_for_30_days": False},
+                                      cookie=cookie, include_headers=True)
+            self.assertEqual(status, 200)
+            self.assertEqual(current, 6)
+        asyncio.run(scenario())
+
     def test_all_formats_one_turn_and_trusted_reports(self):
         calls = []
         generated = []
@@ -56,6 +104,12 @@ class CoordinatedFastApiTests(unittest.TestCase):
             calls.append((url, json.loads(body), key, timeout))
             if "/placements" in url:
                 return PublisherResponse(200, {}, b'{"job_id":"job_synthetic","decision":{"fill":false}}')
+            if url.endswith("/consent"):
+                return PublisherResponse(200, {}, json.dumps({"authoritative_consent": {
+                    "lifecycle_state": calls[-1][1]["lifecycle_state"],
+                    "revision": calls[-1][1]["revision"],
+                    "expires_at_ms": 9999999999999,
+                }}).encode())
             return PublisherResponse(200, {}, b"{}")
 
         def session_id_for_request(request):

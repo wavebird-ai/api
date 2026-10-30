@@ -81,7 +81,7 @@ export function mountWavebirdPython({
     if (typeof id !== "string" || !id.trim()) throw new Error("Real app session required");
     return id;
   }
-  async function syncChoice(state, remember = true) {
+  async function syncChoice(state, remember = true, restoredRevision = null) {
     invalidate();
     const token = epoch;
     if (authorityTimer !== null) clearTimeout(authorityTimer);
@@ -91,17 +91,20 @@ export function mountWavebirdPython({
     if (disposed || privacyBlocked()) return false;
     if (!["granted", "denied", "withdrawn", "cmp_error"].includes(state)) return false;
     const sessionId = await session();
-    const next = ++revision;
+    if (!remember && (!Number.isSafeInteger(restoredRevision) || restoredRevision < 2)) return false;
     const response = await post("/api/wavebird/consent", {
-      session_id: sessionId, lifecycle_state: state, revision: next,
-      remember_for_30_days: remember,
+      session_id: sessionId, lifecycle_state: state, remember_for_30_days: remember,
+      ...(remember ? {} : { revision: restoredRevision }),
     });
     if (!response.ok || disposed || token !== epoch || privacyBlocked()) return false;
     const payload = await response.json();
     if (disposed || token !== epoch || privacyBlocked()) return false;
     const authority = payload.authoritative_consent;
+    if (!Number.isSafeInteger(authority?.revision) || authority.revision < 1 ||
+        (!remember && authority.revision !== restoredRevision)) return false;
+    revision = authority.revision;
     consentGranted = state === "granted" &&
-      authority?.lifecycle_state === "granted" && authority?.revision === next &&
+      authority?.lifecycle_state === "granted" &&
       armAuthority(authority?.expires_at_ms);
     return consentGranted;
   }
@@ -113,8 +116,9 @@ export function mountWavebirdPython({
       });
       if (!response.ok) return false;
       const preference = (await response.json()).preference;
-      if (preference?.state !== "granted" || preference.expires_at <= Date.now()) return false;
-      return await syncChoice("granted", false);
+      if (preference?.state !== "granted" || preference.expires_at <= Date.now() ||
+          !Number.isSafeInteger(preference.revision) || preference.revision < 1) return false;
+      return await syncChoice("granted", false, preference.revision + 1);
     } catch { return false; }
   }
   const readyChoice = restoreChoice();

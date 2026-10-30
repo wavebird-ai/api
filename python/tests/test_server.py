@@ -1,6 +1,8 @@
 import json
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
+from threading import Event, Lock
 
 from wavebird_publisher import PublisherConfig, PublisherRequest, PublisherResponse, PublisherServer
 
@@ -22,6 +24,44 @@ def request(origin, body=None, headers=None, method="POST"):
 
 
 class ServerTests(unittest.TestCase):
+    def test_opt_in_responsive_selection_uses_saved_format_sizes_and_no_fit_skips_upstream(self):
+        calls = []
+        cfg = replace(config(), allowed_formats=("banner", "native", "clip"),
+                      allowed_sizes=((728, 90), (320, 50), (300, 250), (640, 360)),
+                      size_formats=((728, 90, ("banner",)), (320, 50, ("banner",)),
+                                    (300, 250, ("native",)), (640, 360, ("clip",))),
+                      max_width=728, max_height=360, responsive_size_selection=True)
+
+        def transport(url, body, key, timeout):
+            calls.append(json.loads(body))
+            return PublisherResponse(200, {}, b'{"decision":{"fill":false}}')
+
+        server = PublisherServer(cfg, transport)
+        origin = "https://publisher-one.example"
+        for width, height, fmt, expected_size, expected_format in (
+            (728, 360, "banner", (728, 90), "banner"),
+            (390, 250, "auto", (320, 50), "banner"),
+            (320, 250, "native", (300, 250), "native"),
+            (640, 360, "clip", (640, 360), "clip"),
+        ):
+            response = server.placement_post(request(origin, {"session_id": "s", "format": fmt,
+                                                     "container_size": {"width": width, "height": height}}))
+            self.assertEqual(response.status, 200)
+            self.assertEqual(calls[-1]["slot_hint"]["allowed_sizes"], [{"width": expected_size[0], "height": expected_size[1]}])
+            self.assertEqual(calls[-1]["overrides"]["allowed_formats"], [expected_format])
+            self.assertLessEqual(calls[-1]["slot_hint"]["max_width"], width)
+            self.assertLessEqual(calls[-1]["slot_hint"]["max_height"], height)
+        self.assertEqual(len(calls), 4)
+        no_fit = server.placement_post(request(origin, {"session_id": "s", "container_size": {"width": 290, "height": 250}}))
+        self.assertEqual(no_fit.json(), {"decision": {"fill": False, "reason": "no_fit"}, "placement": None})
+        self.assertEqual(server.placement_post(request(origin, {"session_id": "s", "format": "native",
+                                                       "container_size": {"width": 320, "height": 90}})).json()["decision"]["reason"], "no_fit")
+        for bounds in ({"width": 0, "height": 250}, {"width": True, "height": 250}, None):
+            self.assertEqual(server.placement_post(request(origin, {"session_id": "s", "container_size": bounds})).status, 400)
+        self.assertEqual(server.placement_post(request(origin, {"session_id": "s", "format": "unknown",
+                                                       "container_size": {"width": 728, "height": 360}})).status, 400)
+        self.assertEqual(len(calls), 4)
+
     def test_three_formats_share_saved_scope_and_unknown_format_fails(self):
         calls = []
         cfg = replace(config(), allowed_formats=("banner", "native", "clip"), timing="after",
@@ -100,11 +140,62 @@ class ServerTests(unittest.TestCase):
         timed = PublisherServer(config(), lambda *args: (_ for _ in ()).throw(TimeoutError()))
         self.assertEqual(timed.placement_post(request(origin, {"session_id": "s"})).status, 502)
 
-    def test_live_key_and_wildcard_origin_rejected(self):
-        with self.assertRaisesRegex(ValueError, "publisher_test_scope_invalid"):
-            PublisherConfig(**{**config().__dict__, "server_test_key": "sk_live_bad"})
+    def test_upstream_capacity_fails_fast_and_recovers(self):
+        origin = "https://publisher-one.example"
+        release = Event()
+        two_started = Event()
+        lock = Lock()
+        active = 0
+
+        def transport(url, body, key, timeout):
+            nonlocal active
+            with lock:
+                active += 1
+                if active == 2:
+                    two_started.set()
+            release.wait(2)
+            return PublisherResponse(200, {}, b'{"decision":{"fill":false}}')
+
+        server = PublisherServer(config(), transport)
+        with ThreadPoolExecutor(max_workers=2) as workers:
+            first = workers.submit(server.placement_post, request(origin, {"session_id": "first"}))
+            second = workers.submit(server.placement_post, request(origin, {"session_id": "second"}))
+            try:
+                self.assertTrue(two_started.wait(1))
+                limited = server.placement_post(request(origin, {"session_id": "third"}))
+                self.assertEqual(limited.status, 429)
+                self.assertEqual(limited.json()["error"], "wavebird_capacity_exceeded")
+            finally:
+                release.set()
+            self.assertEqual(first.result(1).status, 200)
+            self.assertEqual(second.result(1).status, 200)
+        self.assertEqual(server.placement_post(request(origin, {"session_id": "fourth"})).status, 200)
+        self.assertEqual(active, 3)
+
+    def test_test_and_live_server_keys_share_the_package_contract(self):
+        origin = "https://publisher-one.example"
+        calls = []
+        for key in ("sk_test_synthetic", "sk_live_synthetic"):
+            cfg = replace(config(), server_test_key="", server_key=key)
+            server = PublisherServer(cfg, lambda url, body, sent_key, timeout: (
+                calls.append((url, sent_key, timeout)) or PublisherResponse(200, {}, b'{"decision":{"fill":false}}')
+            ))
+            self.assertEqual(server.placement_post(request(origin, {"session_id": "s"})).status, 200)
+            self.assertEqual(calls[-1][1], key)
+        self.assertEqual(len(calls), 2)
+        with self.assertRaisesRegex(ValueError, "publisher_server_key_invalid"):
+            replace(config(), server_test_key="", server_key="pk_publishable_wrong_scope")
+        with self.assertRaisesRegex(ValueError, "publisher_server_key_conflict"):
+            replace(config(), server_key="sk_live_other")
+
+    def test_wildcard_origin_rejected(self):
         with self.assertRaisesRegex(ValueError, "publisher_origins_invalid"):
             PublisherConfig(**{**config().__dict__, "public_origins": ("http://localhost:*",)})
+        with self.assertRaisesRegex(ValueError, "publisher_origins_invalid"):
+            replace(config(), server_test_key="", server_key="sk_live_synthetic",
+                    public_origins=("http://localhost:4173",))
+        self.assertEqual(replace(config(), public_origins=("http://localhost:4173",)).public_origins,
+                         ("http://localhost:4173",))
 
 
 if __name__ == "__main__":

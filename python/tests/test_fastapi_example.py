@@ -5,14 +5,14 @@ import json
 import unittest
 from urllib.parse import urlsplit
 
-from fastapi import Request
+from fastapi import FastAPI, Request
 from fastapi.responses import Response
 
 from examples.fastapi_app.app import create_app
 from wavebird_publisher import PublisherConfig, PublisherResponse, PublisherServer
 
 
-def candidate(origin: str, project: str):
+def candidate(origin: str, project: str, host_app: FastAPI | None = None):
     calls: list[dict] = []
     generations: list[str] = []
 
@@ -42,7 +42,8 @@ def candidate(origin: str, project: str):
         return Response("model result", media_type="text/plain")
 
     return create_app(PublisherServer(config, transport), generate,
-                      lambda request: "own-session" if request.header("x-publisher-session") == "real-session" else None), calls, generations
+                      lambda request: "own-session" if request.header("x-publisher-session") == "real-session" else None,
+                      host_app=host_app), calls, generations
 
 
 def call(app, origin: str, path: str, headers: dict[str, str], payload: dict | None = None):
@@ -79,6 +80,17 @@ def call(app, origin: str, path: str, headers: dict[str, str], payload: dict | N
 
 
 class FastApiExampleTests(unittest.TestCase):
+    def test_example_mount_preserves_existing_host_route(self):
+        host = FastAPI()
+
+        @host.post("/health")
+        async def health():
+            return Response("host ready")
+
+        app, _, _ = candidate("https://publisher.example", "wbproj_secure", host)
+        self.assertIs(app, host)
+        self.assertEqual(call(app, "https://publisher.example", "/health", {})[1], b"host ready")
+
     def test_two_publishers_each_stay_in_their_own_project(self):
         for origin, project in (
             ("https://first.example", "wbproj_first"),

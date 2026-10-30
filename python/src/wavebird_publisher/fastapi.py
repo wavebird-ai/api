@@ -2,6 +2,7 @@
 import asyncio
 import json
 import re
+import sqlite3
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable
 from fastapi import FastAPI, Request
@@ -9,6 +10,7 @@ from fastapi.responses import Response, StreamingResponse
 from starlette.concurrency import run_in_threadpool
 from wavebird_publisher import PublisherRequest, PublisherResponse, PublisherServer
 from .assets import browser_module_bytes
+from .turn_journal import SqliteTurnJournal
 
 _TURN = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
 
@@ -140,9 +142,37 @@ class _GenerationCoordinator:
         await self._advance(key, phase=event)
 
 def create_app(server: PublisherServer, session_id_for_request: Callable[[PublisherRequest], str | None],
-               existing_generation: Callable[[Request], Awaitable[Response]]) -> FastAPI:
-    app = FastAPI()
-    coordinator = _GenerationCoordinator(server)
+               existing_generation: Callable[[Request], Awaitable[Response]], *,
+               turn_journal_path: str | None = None,
+               on_diagnostic: Callable[[str], None] | None = None) -> FastAPI:
+    return mount_fastapi(FastAPI(), server, session_id_for_request, existing_generation,
+                         turn_journal_path=turn_journal_path, on_diagnostic=on_diagnostic)
+
+
+def mount_fastapi(app: FastAPI, server: PublisherServer,
+                  session_id_for_request: Callable[[PublisherRequest], str | None],
+                  existing_generation: Callable[[Request], Awaitable[Response]], *,
+                  turn_journal_path: str | None = None,
+                  on_diagnostic: Callable[[str], None] | None = None) -> FastAPI:
+    """Add Wavebird routes to an existing FastAPI app without replacing its routes or middleware.
+
+    Mount before the app starts serving. The default coordinator remains single-process;
+    a shared turn coordinator is required before multi-worker use is supported.
+    """
+    if any(getattr(route, "path", None) in {
+        "/api/wavebird/browser.js", "/api/wavebird/placement",
+        "/api/wavebird/consent", "/api/wavebird/generate",
+    } for route in app.routes):
+        raise ValueError("wavebird_route_conflict")
+    coordinator = SqliteTurnJournal(server, turn_journal_path, on_diagnostic) if turn_journal_path else _GenerationCoordinator(server)
+    def diagnostic(code: str) -> None:
+        if on_diagnostic:
+            try:
+                on_diagnostic(code)
+            except Exception:
+                pass
+    if turn_journal_path:
+        app.add_event_handler("startup", coordinator.reconcile_pending)
 
     @app.get("/api/wavebird/browser.js")
     async def browser_module() -> Response:
@@ -158,18 +188,39 @@ def create_app(server: PublisherServer, session_id_for_request: Callable[[Publis
         denied = server.authorize_generation(_publisher_request(request, body))
         if denied is not None:
             return _response(denied)
-        if not await coordinator.claim_placement(identity):
+        try:
+            claimed = await coordinator.claim_placement(identity)
+        except sqlite3.Error:
+            diagnostic("turn_journal_unavailable")
+            return Response(status_code=503)
+        if not claimed:
             return Response(status_code=409)
         result = await run_in_threadpool(server.placement_post, _publisher_request(request, body))
         if result.status in {400, 401, 403}:
             await coordinator.release_rejected_placement(identity)
         if result.status == 200:
             try:
-                job_id = result.json().get("job_id")
+                payload = result.json()
+                if not isinstance(payload, dict):
+                    raise ValueError("placement_response_invalid")
+                job_id = payload.get("job_id")
                 if isinstance(job_id, str) and re.fullmatch(r"job_[A-Za-z0-9_-]{1,128}", job_id):
-                    await coordinator.bind(identity, job_id)
+                    try:
+                        await coordinator.bind(identity, job_id)
+                    except (sqlite3.Error, ValueError):
+                        diagnostic("turn_binding_unavailable")
+                        return Response(status_code=502)
+                elif turn_journal_path and not (
+                    isinstance(payload.get("decision"), dict) and
+                    payload["decision"].get("fill") is False and
+                    "placement" in payload and payload["placement"] is None
+                ):
+                    diagnostic("turn_binding_unavailable")
+                    return Response(status_code=502)
             except (ValueError, TypeError):
-                pass
+                if turn_journal_path:
+                    diagnostic("turn_binding_unavailable")
+                    return Response(status_code=502)
         return _response(result)
 
     @app.get("/api/wavebird/consent")
@@ -192,19 +243,40 @@ def create_app(server: PublisherServer, session_id_for_request: Callable[[Publis
         identity = _identity(request, body, session_id_for_request)
         if identity is None:
             return Response(status_code=401)
-        if not await coordinator.claim_generation(identity):
+        try:
+            claimed = await coordinator.claim_generation(identity)
+        except sqlite3.Error:
+            diagnostic("turn_journal_unavailable")
+            return await existing_generation(request)
+        if not claimed:
             return Response(status_code=409)
-        await coordinator.phase(identity, "started")
+        try:
+            await coordinator.phase(identity, "started")
+        except sqlite3.Error:
+            diagnostic("turn_journal_unavailable")
+            pass
         try:
             upstream = await existing_generation(request)
         except (Exception, asyncio.CancelledError):
-            await coordinator.phase(identity, "failed")
+            try:
+                await coordinator.phase(identity, "failed")
+            except sqlite3.Error:
+                diagnostic("turn_journal_unavailable")
+                pass
             raise
         if upstream.status_code >= 400:
-            await coordinator.phase(identity, "failed")
+            try:
+                await coordinator.phase(identity, "failed")
+            except sqlite3.Error:
+                diagnostic("turn_journal_unavailable")
+                pass
             return upstream
         if not isinstance(upstream, StreamingResponse):
-            await coordinator.phase(identity, "finished")
+            try:
+                await coordinator.phase(identity, "finished")
+            except sqlite3.Error:
+                diagnostic("turn_journal_unavailable")
+                pass
             return upstream
 
         async def stream() -> AsyncIterator[bytes]:
@@ -213,9 +285,17 @@ def create_app(server: PublisherServer, session_id_for_request: Callable[[Publis
                     if await request.is_disconnected():
                         raise asyncio.CancelledError()
                     yield chunk
-                await coordinator.phase(identity, "finished")
+                try:
+                    await coordinator.phase(identity, "finished")
+                except sqlite3.Error:
+                    diagnostic("turn_journal_unavailable")
+                    pass
             except (Exception, asyncio.CancelledError):
-                await coordinator.phase(identity, "failed")
+                try:
+                    await coordinator.phase(identity, "failed")
+                except sqlite3.Error:
+                    diagnostic("turn_journal_unavailable")
+                    pass
                 raise
 
         headers = {key: value for key, value in upstream.headers.items()

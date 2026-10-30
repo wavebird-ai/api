@@ -3,7 +3,7 @@
 export function mountWavebirdPython({
   slot, promptInput, runButton, stopButton, result, consentButton, withdrawButton,
   choiceDialog, getSessionId, consumeGeneration, chooseOwnCmp,
-  timing, consentMode, maxHeight,
+  timing, consentMode, maxHeight, getFormat, jobType, apiBasePath = "",
 }) {
   if (!slot || !promptInput || !runButton || !stopButton || !result ||
       !consentButton || !withdrawButton || !getSessionId || !consumeGeneration) {
@@ -11,26 +11,47 @@ export function mountWavebirdPython({
   }
   if (!["before", "during", "after"].includes(timing) ||
       !["wavebird_consent", "own_cmp"].includes(consentMode) ||
-      !Number.isSafeInteger(maxHeight) || maxHeight < 1 || maxHeight > 2048) {
+      !Number.isSafeInteger(maxHeight) || maxHeight < 1 || maxHeight > 2048 ||
+      !["chat", "code", "image", "voice", "agent"].includes(jobType) ||
+      (typeof apiBasePath !== "string" ||
+        (apiBasePath !== "" && !/^\/(?:[A-Za-z0-9_-]+\/)*[A-Za-z0-9_-]+$/.test(apiBasePath)))) {
     throw new Error("Invalid saved project presentation settings");
   }
-  slot.style.minHeight = String(maxHeight + 256) + "px";
+  slot.style.minHeight = String(maxHeight) + "px";
   slot.setAttribute("aria-label", "Sponsored placement");
   let revision = 0, epoch = 0, consentGranted = false;
   let generationAbort = null, placementAbort = null, renderCleanup = null;
+  let renderedSize = null;
   let authorityTimer = null, authorityExpiresAt = 0;
   let disposed = false;
-  const post = (route, body, signal) => fetch(route, {
+  const apiRoute = route => apiBasePath + route;
+  const post = (route, body, signal) => fetch(apiRoute(route), {
     method: "POST", credentials: "same-origin", signal,
     headers: { "content-type": "application/json" }, body: JSON.stringify(body),
   });
   const privacyBlocked = () => navigator.globalPrivacyControl === true;
   function clearSlot() {
+    renderedSize = null;
     try { renderCleanup?.(); } catch { /* A renderer cleanup must not stop generation. */ }
     renderCleanup = null;
     slot.replaceChildren();
     slot.hidden = true;
   }
+  function fits(width, height) {
+    const measured = slot.getBoundingClientRect();
+    const availableWidth = Math.min(slot.parentElement?.getBoundingClientRect().width ?? measured.width,
+      measured.width);
+    return width > 0 && height > 0 && availableWidth >= width && measured.height >= height;
+  }
+  function onSizeChange() {
+    if (renderedSize && !fits(renderedSize.width, renderedSize.height)) {
+      slot.dataset.wavebirdStatus = "no_fit";
+      clearSlot();
+    }
+  }
+  const sizeObserver = typeof ResizeObserver === "function" ? new ResizeObserver(onSizeChange) : null;
+  sizeObserver?.observe(slot);
+  if (slot.parentElement) sizeObserver?.observe(slot.parentElement);
   function invalidate() {
     ++epoch;
     placementAbort?.abort();
@@ -87,7 +108,7 @@ export function mountWavebirdPython({
   async function restoreChoice() {
     if (disposed || privacyBlocked()) return false;
     try {
-      const response = await fetch("/api/wavebird/consent", {
+      const response = await fetch(apiRoute("/api/wavebird/consent"), {
         credentials: "same-origin", cache: "no-store",
       });
       if (!response.ok) return false;
@@ -108,43 +129,98 @@ export function mountWavebirdPython({
     });
     if (!window.wavebird?.renderPlacement) throw new Error("renderer_unavailable");
   }
-  async function sponsor(turnId, sessionId, token) {
+  async function sponsor(turnId, sessionId, token, lifecycle) {
     await readyChoice;
-    if (!consentGranted || privacyBlocked() || token !== epoch) return;
+    if (!consentGranted || privacyBlocked() || token !== epoch || lifecycle.sponsorEnded) return;
+    slot.hidden = false;
+    const parent = slot.parentElement?.getBoundingClientRect();
+    const own = slot.getBoundingClientRect();
+    const containerSize = {
+      width: Math.floor(Math.min(parent?.width ?? own.width, own.width)),
+      height: Math.floor(own.height),
+    };
+    if (containerSize.width < 1 || containerSize.height < 1) {
+      slot.dataset.wavebirdStatus = "no_fit";
+      clearSlot();
+      return;
+    }
+    let format;
+    try { format = typeof getFormat === "function" ? getFormat() : "auto"; }
+    catch { clearSlot(); return; }
+    if (!["auto", "banner", "native", "clip"].includes(format)) { clearSlot(); return; }
     const controller = new AbortController();
     placementAbort = controller;
     try {
       const response = await post("/api/wavebird/placement", {
-        session_id: sessionId, turn_id: turnId,
+        session_id: sessionId, turn_id: turnId, format, container_size: containerSize,
       }, controller.signal);
-      if (!response.ok || token !== epoch || privacyBlocked()) return;
+      if (token !== epoch || lifecycle.sponsorEnded) return;
+      if (!response.ok || privacyBlocked()) { clearSlot(); return; }
       const payload = await response.json();
-      if (payload.decision?.fill !== true || !payload.placement) return; // No-Fill.
+      if (payload.decision?.fill !== true || !payload.placement) { clearSlot(); return; } // No-Fill.
+      lifecycle.format = payload.decision?.format;
+      if (timing === "during" && lifecycle.modelFinished && lifecycle.format === "clip") {
+        clearSlot();
+        return;
+      }
       const width = Number(payload.placement?.width ?? payload.decision?.dimensions?.width);
       const height = Number(payload.placement?.height ?? payload.decision?.dimensions?.height);
-      const availableWidth = slot.parentElement?.getBoundingClientRect().width ?? 0;
-      if (!(width > 0 && height > 0 && availableWidth >= width)) {
+      if (!fits(width, height)) {
         slot.dataset.wavebirdStatus = "no_fit";
+        clearSlot();
         return;
       }
       if (payload.authoritative_consent?.lifecycle_state !== "granted" ||
           payload.authoritative_consent?.revision !== revision ||
-          !armAuthority(payload.authoritative_consent?.expires_at_ms)) return;
+          !armAuthority(payload.authoritative_consent?.expires_at_ms)) { clearSlot(); return; }
       await ensureRenderer();
-      if (token !== epoch || !consentGranted || privacyBlocked()) return;
+      if (token !== epoch || lifecycle.sponsorEnded || !consentGranted || privacyBlocked()) return;
+      if (!fits(width, height)) {
+        slot.dataset.wavebirdStatus = "no_fit";
+        clearSlot();
+        return;
+      }
       slot.hidden = false;
+      let clipCompleted = false;
+      let renderFailed = false;
+      const onRenderFailed = () => {
+        if (renderFailed || token !== epoch || lifecycle.sponsorEnded || disposed) return;
+        renderFailed = true;
+        slot.dataset.wavebirdStatus = "frame_error";
+        clearSlot();
+      };
+      const onClipCompleted = () => {
+        if (clipCompleted || payload.decision?.format !== "clip" ||
+            token !== epoch || lifecycle.sponsorEnded || !consentGranted || privacyBlocked() || disposed) return;
+        clipCompleted = true;
+        lifecycle.sponsorEnded = true;
+        slot.dataset.wavebirdStatus = "completed";
+        if (renderCleanup) clearSlot();
+      };
       const cleanup = await window.wavebird.renderPlacement({
         target: slot, placement: payload.placement, decision: payload.decision,
         authoritative_consent: payload.authoritative_consent,
+        onClipCompleted, onRenderFailed,
       });
-      if (token !== epoch || !consentGranted || privacyBlocked()) {
+      if (renderFailed) {
+        if (typeof cleanup === "function") cleanup();
+        return;
+      }
+      if (clipCompleted) {
+        if (typeof cleanup === "function") cleanup();
+        clearSlot();
+        return;
+      }
+      if (token !== epoch || lifecycle.sponsorEnded || !consentGranted || privacyBlocked()) {
         if (typeof cleanup === "function") cleanup();
         return;
       }
       if (typeof cleanup !== "function") { clearSlot(); return; }
       renderCleanup = cleanup;
+      renderedSize = { width, height };
+      onSizeChange();
     } catch (error) {
-      if (error?.name !== "AbortError") clearSlot();
+      if (error?.name !== "AbortError" && token === epoch) clearSlot();
     } finally { if (placementAbort === controller) placementAbort = null; }
   }
   async function run() {
@@ -153,22 +229,36 @@ export function mountWavebirdPython({
     generationAbort?.abort();
     invalidate();
     const token = epoch, turnId = crypto.randomUUID();
+    const lifecycle = { format: null, modelFinished: false, sponsorEnded: false };
     const sessionId = await session();
     if (token !== epoch || disposed) return;
     generationAbort = new AbortController();
     stopButton.disabled = false;
     result.replaceChildren();
-    if (timing !== "after") void sponsor(turnId, sessionId, token);
+    if (timing !== "after") void sponsor(turnId, sessionId, token, lifecycle);
     try {
       const response = await post("/api/wavebird/generate", {
         session_id: sessionId, turn_id: turnId, prompt,
       }, generationAbort.signal);
       if (!response.ok) throw new Error("Generation failed");
       await consumeGeneration(response, generationAbort.signal, (item) => {
-        if (token === epoch) result.append(typeof Node !== "undefined" && item instanceof Node
-          ? item : document.createTextNode(String(item)));
+        if (token === epoch) {
+          result.append(typeof Node !== "undefined" && item instanceof Node
+            ? item : document.createTextNode(String(item)));
+          if (timing === "before" && !lifecycle.sponsorEnded) {
+            lifecycle.sponsorEnded = true;
+            placementAbort?.abort();
+            clearSlot();
+          }
+        }
       });
-      if (timing === "after" && token === epoch) void sponsor(turnId, sessionId, token);
+      lifecycle.modelFinished = true;
+      if (timing === "after" && token === epoch) void sponsor(turnId, sessionId, token, lifecycle);
+      if (token === epoch && (timing === "before" ||
+          (timing === "during" && (jobType !== "chat" || lifecycle.format === "clip")))) {
+        lifecycle.sponsorEnded = true;
+        invalidate();
+      }
     } catch (error) {
       if (token === epoch) {
         invalidate();
@@ -218,8 +308,12 @@ export function mountWavebirdPython({
   consentButton.addEventListener("click", onConsent);
   withdrawButton.addEventListener("click", onWithdraw);
   window.addEventListener?.("focus", onPrivacyChange);
-  return () => {
+  window.addEventListener?.("resize", onSizeChange);
+  const dispose = () => {
+    if (disposed) return;
     disposed = true;
+    sizeObserver?.disconnect();
+    window.removeEventListener?.("resize", onSizeChange);
     if (authorityTimer !== null) clearTimeout(authorityTimer);
     authorityExpiresAt = 0;
     generationAbort?.abort();
@@ -229,5 +323,8 @@ export function mountWavebirdPython({
     consentButton.removeEventListener("click", onConsent);
     withdrawButton.removeEventListener("click", onWithdraw);
     window.removeEventListener?.("focus", onPrivacyChange);
+    window.removeEventListener?.("pagehide", dispose);
   };
+  window.addEventListener?.("pagehide", dispose);
+  return dispose;
 }

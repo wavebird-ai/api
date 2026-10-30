@@ -1,6 +1,7 @@
 """Load saved Dashboard settings from server-only ENV and start the FastAPI bridge."""
 
 import os
+import json
 
 from wavebird_publisher import PublisherConfig, PublisherServer
 
@@ -27,9 +28,22 @@ def _sizes(value: str) -> tuple[tuple[int, int], ...]:
 
 def configured_app():
     sizes = _sizes(_required("WAVEBIRD_ALLOWED_SIZES"))
+    try:
+        annotations = json.loads(_required("WAVEBIRD_SIZE_FORMATS_JSON"))
+        if not isinstance(annotations, list):
+            raise ValueError()
+        size_formats = tuple((width, height, tuple(formats))
+                             for width, height, formats in annotations)
+    except (ValueError, TypeError) as error:
+        raise ValueError("WAVEBIRD_SIZE_FORMATS_JSON must map each saved size to formats") from error
+    if {entry[:2] for entry in size_formats} != set(sizes):
+        raise ValueError("WAVEBIRD_SIZE_FORMATS_JSON must cover each saved size")
+    gdpr = _required("WAVEBIRD_GDPR_APPLIES").lower()
+    if gdpr not in {"true", "false"}:
+        raise ValueError("WAVEBIRD_GDPR_APPLIES must be true or false")
     config = PublisherConfig(
         client_id=_required("WAVEBIRD_CLIENT_ID"),
-        server_test_key=_required("WAVEBIRD_SECRET_KEY"),
+        server_key=_required("WAVEBIRD_SECRET_KEY"),
         preference_secret=_required("WAVEBIRD_PREFERENCE_SECRET"),
         public_origins=tuple(item.strip() for item in _required("WAVEBIRD_PUBLIC_ORIGINS").split(",")),
         surface_id=_required("WAVEBIRD_SURFACE_ID"),
@@ -42,12 +56,16 @@ def configured_app():
         publisher_domain=_required("WAVEBIRD_APP_DOMAIN"),
         allowed_formats=tuple(item.strip() for item in _required("WAVEBIRD_ALLOWED_FORMATS").split(",")),
         allowed_sizes=sizes,
+        size_formats=size_formats,
+        responsive_size_selection=True,
         position_hint=_required("WAVEBIRD_POSITION_HINT"),
         max_width=max(width for width, _ in sizes),
         max_height=max(height for _, height in sizes),
+        gdpr_applies=gdpr == "true",
         authorize=authorize_publisher_request,
     )
-    return create_app(PublisherServer(config), existing_generation)
+    return create_app(PublisherServer(config), existing_generation,
+                      turn_journal_path=_required("WAVEBIRD_TURN_JOURNAL_PATH"))
 
 
 app = configured_app()

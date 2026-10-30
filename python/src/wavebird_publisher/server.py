@@ -1,4 +1,4 @@
-"""Framework-neutral, server-only Wavebird Test placement and consent bridge."""
+"""Framework-neutral, server-only Wavebird placement and consent bridge."""
 
 from __future__ import annotations
 
@@ -7,8 +7,9 @@ import hashlib
 import hmac
 import json
 import re
+import threading
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Callable, Mapping
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
@@ -45,7 +46,7 @@ class PublisherResponse:
 @dataclass(frozen=True)
 class PublisherConfig:
     client_id: str
-    server_test_key: str
+    server_test_key: str = field(default="", kw_only=True, repr=False)
     preference_secret: str
     public_origins: tuple[str, ...]
     surface_id: str
@@ -64,10 +65,21 @@ class PublisherConfig:
     authorize: Callable[[PublisherRequest], bool]
     api_base_url: str = "https://api.wavebird.ai"
     gdpr_applies: bool = False
+    responsive_size_selection: bool = False
+    size_formats: tuple[tuple[int, int, tuple[str, ...]], ...] = ()
+    server_key: str = field(default="", kw_only=True, repr=False)
+
+    @property
+    def resolved_server_key(self) -> str:
+        return self.server_key or self.server_test_key
 
     def __post_init__(self) -> None:
-        if not self.client_id.startswith("wbproj_") or not self.server_test_key.startswith("sk_test_"):
-            raise ValueError("publisher_test_scope_invalid")
+        if not self.client_id.startswith("wbproj_"):
+            raise ValueError("publisher_project_invalid")
+        if self.server_key and self.server_test_key and self.server_key != self.server_test_key:
+            raise ValueError("publisher_server_key_conflict")
+        if not self.resolved_server_key.startswith(("sk_test_", "sk_live_")):
+            raise ValueError("publisher_server_key_invalid")
         if len(self.preference_secret.encode()) < 32 or not callable(self.authorize):
             raise ValueError("publisher_security_config_invalid")
         if not _ID.fullmatch(self.surface_id) or not _PLACEMENT_KEY.fullmatch(self.placement_key):
@@ -78,8 +90,20 @@ class PublisherConfig:
             raise ValueError("publisher_position_invalid")
         if not self.allowed_formats or any(value not in ("banner", "native", "clip") for value in self.allowed_formats):
             raise ValueError("publisher_formats_invalid")
-        if not self.allowed_sizes or any(not (isinstance(w, int) and isinstance(h, int) and 0 < w <= self.max_width and 0 < h <= self.max_height) for w, h in self.allowed_sizes):
+        if not self.allowed_sizes or any(not (type(w) is int and type(h) is int and 0 < w <= self.max_width and 0 < h <= self.max_height) for w, h in self.allowed_sizes):
             raise ValueError("publisher_sizes_invalid")
+        if not isinstance(self.responsive_size_selection, bool):
+            raise ValueError("publisher_responsive_selection_invalid")
+        if not isinstance(self.size_formats, tuple):
+            raise ValueError("publisher_size_formats_invalid")
+        seen_sizes = set()
+        for entry in self.size_formats:
+            if not isinstance(entry, tuple) or len(entry) != 3:
+                raise ValueError("publisher_size_formats_invalid")
+            width, height, formats = entry
+            if (width, height) not in self.allowed_sizes or (width, height) in seen_sizes or not isinstance(formats, tuple) or not formats or any(not isinstance(fmt, str) for fmt in formats) or len(set(formats)) != len(formats) or any(fmt not in self.allowed_formats for fmt in formats):
+                raise ValueError("publisher_size_formats_invalid")
+            seen_sizes.add((width, height))
         if not self.public_origins or len(set(self.public_origins)) != len(self.public_origins):
             raise ValueError("publisher_origins_invalid")
         for origin in self.public_origins:
@@ -89,7 +113,7 @@ class PublisherConfig:
             except ValueError as error:
                 raise ValueError("publisher_origins_invalid") from error
             loopback = parsed.hostname in ("localhost", "127.0.0.1")
-            if parsed.geturl() != origin or not parsed.netloc or parsed.username or parsed.password or parsed.path or parsed.query or parsed.fragment or (parsed.scheme != "https" and not (loopback and parsed.scheme == "http")):
+            if parsed.geturl() != origin or not parsed.netloc or parsed.username or parsed.password or parsed.path or parsed.query or parsed.fragment or (parsed.scheme != "https" and not (loopback and parsed.scheme == "http" and self.resolved_server_key.startswith("sk_test_"))):
                 raise ValueError("publisher_origins_invalid")
         base = urlsplit(self.api_base_url)
         if base.scheme != "https" or not base.netloc or base.query or base.fragment:
@@ -121,6 +145,7 @@ class PublisherServer:
     def __init__(self, config: PublisherConfig, transport: Callable[[str, bytes, str, float], PublisherResponse] = default_transport):
         self.config = config
         self.transport = transport
+        self._upstream_capacity = threading.BoundedSemaphore(2)
 
     @staticmethod
     def _reply(status: int, value: dict, headers: Mapping[str, str] | None = None) -> PublisherResponse:
@@ -156,13 +181,17 @@ class PublisherServer:
             return None
 
     def _upstream(self, path: str, payload: dict) -> PublisherResponse:
+        if not self._upstream_capacity.acquire(blocking=False):
+            return self._reply(429, {"error": "wavebird_capacity_exceeded"})
         try:
-            result = self.transport(self.config.api_base_url.rstrip("/").removesuffix("/v1") + "/v1" + path, json.dumps(payload, separators=(",", ":")).encode(), self.config.server_test_key, 5)
+            result = self.transport(self.config.api_base_url.rstrip("/").removesuffix("/v1") + "/v1" + path, json.dumps(payload, separators=(",", ":")).encode(), self.config.resolved_server_key, 5)
             if len(result.body) > 256 * 1024:
                 raise ValueError("wavebird_response_too_large")
             return PublisherResponse(result.status, {"Content-Type": result.headers.get("Content-Type", "application/json"), "Cache-Control": "no-store"}, result.body)
         except (OSError, URLError, TimeoutError, ValueError):
             return self._reply(502, {"error": "wavebird_unavailable"})
+        finally:
+            self._upstream_capacity.release()
 
     def placement_post(self, request: PublisherRequest) -> PublisherResponse:
         if not self._authorized(request):
@@ -178,12 +207,31 @@ class PublisherServer:
         if not isinstance(session_id, str) or not session_id.strip():
             return self._reply(400, {"error": "session_id_required"})
         config = self.config
+        sizes = config.allowed_sizes
+        formats = config.allowed_formats
+        max_width, max_height = config.max_width, config.max_height
+        if config.responsive_size_selection:
+            bounds = data.get("container_size")
+            if not isinstance(bounds, dict) or any(type(bounds.get(key)) is not int or not 0 < bounds[key] <= 8192 for key in ("width", "height")):
+                return self._reply(400, {"error": "publisher_container_size_invalid"})
+            requested = data.get("format", "auto")
+            if requested != "auto" and requested not in formats:
+                return self._reply(400, {"error": "publisher_format_invalid"})
+            assigned = {(w, h): allowed for w, h, allowed in config.size_formats}
+            fitting = [(w, h) for w, h in sizes if w <= bounds["width"] and h <= bounds["height"] and
+                       (requested == "auto" or requested in assigned.get((w, h), formats))]
+            if not fitting:
+                return self._reply(200, {"decision": {"fill": False, "reason": "no_fit"}, "placement": None})
+            chosen = max(fitting, key=lambda size: (size[0], size[1]))
+            sizes = (chosen,)
+            formats = tuple(fmt for fmt in formats if fmt in assigned.get(chosen, formats)) if requested == "auto" else (requested,)
+            max_width, max_height = min(max_width, bounds["width"]), min(max_height, bounds["height"])
         return self._upstream("/placements?wait_ms=1500", {
             "client_id": config.client_id, "session_id": session_id, "job_type": config.job_type, "locale": config.locale,
             "slots_requested": 1, "placement_key": config.placement_key,
-            "slot_hint": {"position": config.position_hint, "max_width": config.max_width, "max_height": config.max_height,
-                          "allowed_sizes": [{"width": w, "height": h} for w, h in config.allowed_sizes], "presentation_version": "sponsored_moment_v2"},
-            "overrides": {"allowed_formats": list(config.allowed_formats), "timing": config.timing,
+            "slot_hint": {"position": config.position_hint, "max_width": max_width, "max_height": max_height,
+                          "allowed_sizes": [{"width": w, "height": h} for w, h in sizes], "presentation_version": "sponsored_moment_v2"},
+            "overrides": {"allowed_formats": list(formats), "timing": config.timing,
                           "publisher": {"app_name": config.publisher_name, "app_domain": config.publisher_domain}},
             "consent": {"semantic_targeting": False, "prompt_shared": False, "gdpr_applies": config.gdpr_applies,
                         "consent_source": "wavebird_consent" if config.consent_mode == "wavebird_consent" else "wrapper_cmp"},

@@ -21,9 +21,13 @@ function loadRenderer(url) {
 export function createPublisherAds(options) {
   const target = options.target;
   if (!target || !options.userId || !options.conversationId) throw new Error("Application container and session are required");
+  const turnBinding = options.turnBinding === true;
+  const validId = value => typeof value === "string" && /^[A-Za-z0-9_-]{1,128}$/.test(value);
+  if (turnBinding && !validId(options.sessionId)) throw new Error("publisher_trusted_session_required");
   const timing = options.timing || "during", consentMode = options.consentMode || "wavebird_consent";
   if (!["before", "during", "after"].includes(timing) || !["wavebird_consent", "own_cmp"].includes(consentMode)) throw new Error("Invalid publisher configuration");
-  let binding = { userId: options.userId, conversationId: options.conversationId, sessionId: crypto.randomUUID() };
+  let binding = { userId: options.userId, conversationId: options.conversationId,
+    sessionId: turnBinding ? options.sessionId : crypto.randomUUID() };
   let sponsor = null, disposed = false, context = 0, active = null;
   const slot = document.createElement("section");
   slot.setAttribute("aria-label", "Sponsored placement");
@@ -48,6 +52,8 @@ export function createPublisherAds(options) {
       job.state = "started"; notify("onStarted", job.id);
     } else if (type === "progress") {
       if (job.state === "started") { job.progressed = true; notify("onDelta", job.id); }
+    } else if (type === "no_result") {
+      if (job.state === "started") job.state = "no_result";
     } else if (["done", "error", "abort"].includes(type)) {
       if (job.state !== "started") return;
       job.state = type;
@@ -58,10 +64,14 @@ export function createPublisherAds(options) {
   function setConversation(next) {
     if (disposed) return;
     if (!next.userId || !next.conversationId) throw new Error("Application session is required");
-    if (next.userId === binding.userId && next.conversationId === binding.conversationId) return;
+    if (turnBinding && !validId(next.sessionId)) throw new Error("publisher_trusted_session_required");
+    if (next.userId === binding.userId && next.conversationId === binding.conversationId &&
+        (!turnBinding || next.sessionId === binding.sessionId)) return;
+    if (turnBinding && next.sessionId === binding.sessionId) throw new Error("publisher_session_reuse");
     if (active) event(active, "abort");
     context++; active = null;
-    binding = { userId: next.userId, conversationId: next.conversationId, sessionId: crypto.randomUUID() };
+    binding = { userId: next.userId, conversationId: next.conversationId,
+      sessionId: turnBinding ? next.sessionId : crypto.randomUUID() };
     sponsor?.setConversation(binding); prepare();
   }
   function dispose() {
@@ -77,6 +87,8 @@ export function createPublisherAds(options) {
     if (disposed) return;
     sponsor = window.wavebird.createChatSponsor({ target: slot, ...binding,
       clientId: options.clientId, surfaceId: options.surfaceId, timing, consentMode,
+      cleanupAfterClip: true,
+      ...(turnBinding ? { turnBinding: true } : {}),
       ...(options.getFormat === undefined ? {} : { getFormat: options.getFormat }),
       ...(options.placementEndpoint === undefined ? {} : { placementEndpoint: options.placementEndpoint }),
       ...(options.consentEndpoint === undefined ? {} : { consentEndpoint: options.consentEndpoint }) });
@@ -144,7 +156,8 @@ export function createPublisherAds(options) {
                 return;
               }
               if (["done", "error", "abort"].includes(record.type)) {
-                ended = true; event(job, record.type);
+                ended = true;
+                if (record.type !== "done" || timing !== "after") event(job, record.type);
                 if (record.type === "done" || !metadata.status.toString().startsWith("2")) controller.close();
                 else controller.error(new Error("generation_" + record.type));
                 return;
@@ -158,12 +171,16 @@ export function createPublisherAds(options) {
       if ([204, 205, 304].includes(metadata.status)) {
         const record = await nextRecord();
         if (!["done", "error", "abort"].includes(record.type)) throw new Error("generation_transport_invalid");
-        ended = true; event(job, record.type);
+        ended = true;
+        if (record.type !== "done" || timing !== "after") event(job, record.type);
       }
-      const primary = new Response([204, 205, 304].includes(metadata.status) ? null : output, {
+      const noBody = [204, 205, 304].includes(metadata.status);
+      const primary = new Response(noBody ? null : output, {
         status: metadata.status, statusText: metadata.status_text || "", headers: metadata.headers
       });
-      return await consume(primary, { onDelta: () => event(job, "progress") });
+      const result = await consume(primary, { onDelta: () => event(job, "progress") });
+      if (timing === "after" && ended) event(job, noBody ? "no_result" : "done");
+      return result;
     } catch (error) {
       event(job, signal?.aborted ? "abort" : "error");
       throw error;

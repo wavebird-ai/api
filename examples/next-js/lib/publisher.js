@@ -1,16 +1,25 @@
 import "server-only";
-import { createPublisherServer } from "@wavebirdai/api/server";
-import { authorizePublisherRequest } from "./auth.js";
+import { createPublisherServer, createPublisherTurnJournal, derivePublisherTurnKeySecret } from "@wavebirdai/api/server";
+import { authorizePublisherRequest, sessionIdForRequest } from "./auth.js";
+import { publisherTurnStorage } from "./turn-store.js";
 
 let publisher;
 
 export function getPublisher() {
-  return publisher ??= createPublisherServer({
+  if (publisher) return publisher;
+  const turnJournal = createPublisherTurnJournal({
+    storage: publisherTurnStorage(),
+    keySecret: derivePublisherTurnKeySecret(process.env.WAVEBIRD_PREFERENCE_SECRET ?? ""),
+    reportGeneration: (jobId, event) => getPublisher().reportGeneration(jobId, event),
+  });
+  return publisher = createPublisherServer({
   apiBaseUrl: process.env.WAVEBIRD_API_BASE_URL,
   clientId: process.env.WAVEBIRD_CLIENT_ID,
   secretKey: process.env.WAVEBIRD_SECRET_KEY,
   preferenceSecret: process.env.WAVEBIRD_PREFERENCE_SECRET,
   authorize: authorizePublisherRequest,
+  sessionIdForRequest,
+  turnJournal,
   publicOrigins: (process.env.WAVEBIRD_PUBLIC_ORIGINS ?? "").split(",").map(value => value.trim()).filter(Boolean),
   surfaceId: "chat_assistant",
   placementKey: "default",

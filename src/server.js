@@ -1,4 +1,6 @@
 import { generationTransport } from "./generation.js";
+export { createPublisherTurnJournal, derivePublisherTurnKeySecret } from "./turn-journal.js";
+export { createPostgresTurnStorage } from "./postgres-turn-storage.js";
 
 const PREFERENCE_VERSION = "contextual-choice/v2";
 const PREFERENCE_TTL = 30 * 24 * 60 * 60;
@@ -16,8 +18,13 @@ function response(error, status, headers = {}) {
 function normalizeOptions(options) {
   if (typeof window !== "undefined") throw new Error("publisher_server_only");
   if (!options || typeof options.authorize !== "function") throw new Error("publisher_authorize_required");
+  if ((options.turnJournal === undefined) !== (options.sessionIdForRequest === undefined) ||
+      (options.turnJournal !== undefined && (typeof options.sessionIdForRequest !== "function" ||
+        ["claimPlacement", "releaseRejectedPlacement", "bind", "claimGeneration", "phase"].some(name => typeof options.turnJournal?.[name] !== "function"))))
+    throw new Error("publisher_turn_journal_invalid");
   if (!String(options.clientId || "").startsWith("wbproj_")) throw new Error("publisher_project_invalid");
   if (!String(options.secretKey || "").trim()) throw new Error("publisher_server_key_required");
+  if (!/^sk_(?:test|live)_/.test(options.secretKey)) throw new Error("publisher_server_key_invalid");
   if (!ID.test(options.surfaceId || "") || !PLACEMENT_KEY.test(options.placementKey || "")) throw new Error("publisher_placement_invalid");
   if (!["before", "during", "after"].includes(options.timing)) throw new Error("publisher_timing_invalid");
   if (!["wavebird_consent", "own_cmp"].includes(options.consentMode)) throw new Error("publisher_consent_mode_invalid");
@@ -26,6 +33,10 @@ function normalizeOptions(options) {
   if (!Number.isSafeInteger(options.maxWidth) || options.maxWidth < 1 || !Number.isSafeInteger(options.maxHeight) || options.maxHeight < 1) throw new Error("publisher_envelope_invalid");
   if (!Array.isArray(options.allowedSizes) || options.allowedSizes.length === 0 || options.allowedSizes.some(size => !Number.isSafeInteger(size.width) || !Number.isSafeInteger(size.height) || size.width < 1 || size.height < 1 || size.width > options.maxWidth || size.height > options.maxHeight ||
     (size.formats !== undefined && (!Array.isArray(size.formats) || size.formats.length === 0 || size.formats.some(format => !options.allowedFormats.includes(format)))))) throw new Error("publisher_sizes_invalid");
+  const hasFloor = Object.hasOwn(options, "bidfloor");
+  const hasCurrency = Object.hasOwn(options, "bidfloorCurrency");
+  if (hasFloor !== hasCurrency || (hasFloor && (!Number.isFinite(options.bidfloor) || options.bidfloor < 0 || typeof options.bidfloorCurrency !== "string" || !/^[A-Za-z]{3}$/.test(options.bidfloorCurrency))))
+    throw new Error("publisher_bidfloor_override_invalid");
   if (options.responsiveSizeSelection !== undefined && typeof options.responsiveSizeSelection !== "boolean") throw new Error("publisher_responsive_selection_invalid");
   if (!options.publisher || typeof options.publisher.app_name !== "string" || typeof options.publisher.app_domain !== "string" || !Array.isArray(options.publisher.categories)) throw new Error("publisher_identity_invalid");
   if (typeof options.jobType !== "string" || !options.jobType || typeof options.locale !== "string" || !options.locale) throw new Error("publisher_job_invalid");
@@ -37,7 +48,7 @@ function normalizeOptions(options) {
       let url;
       try { url = new URL(origin); } catch { throw new Error("publisher_public_origins_invalid"); }
       const loopback = url.hostname === "localhost" || url.hostname === "127.0.0.1";
-      if (url.origin !== origin || (url.protocol !== "https:" && !(loopback && url.protocol === "http:"))) throw new Error("publisher_public_origins_invalid");
+      if (url.origin !== origin || (url.protocol !== "https:" && !(loopback && url.protocol === "http:" && options.secretKey.startsWith("sk_test_")))) throw new Error("publisher_public_origins_invalid");
     }
     if (new Set(options.publicOrigins).size !== options.publicOrigins.length) throw new Error("publisher_public_origins_invalid");
   }
@@ -163,12 +174,17 @@ function boundedGenerationReporter() {
   };
 }
 
-function observeGeneration(response, request, onLifecycle) {
-  if (typeof onLifecycle !== "function" || response.headers.get("x-wavebird-generation-transport") !== "1" || !response.body) return response;
+function observeGeneration(response, request, onLifecycle, onCritical) {
+  if (typeof onLifecycle !== "function" && typeof onCritical !== "function") return response;
+  if (response.headers.get("x-wavebird-generation-transport") !== "1" || !response.body) return response;
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let terminal = false;
-  const notify = event => {
+  const notify = async event => {
+    if (typeof onCritical === "function") {
+      try { await onCritical(event); } catch {}
+    }
+    if (typeof onLifecycle !== "function") return;
     try { Promise.resolve(onLifecycle(event)).catch(() => {}); } catch {}
   };
   const body = new ReadableStream({
@@ -181,7 +197,7 @@ function observeGeneration(response, request, onLifecycle) {
           const record = JSON.parse(decoder.decode(next.value));
           if (["started", "done", "error", "abort"].includes(record.type)) {
             if (record.type !== "started") terminal = true;
-            notify({ type: record.type, sessionId: record.session_id, generationId: record.generation_id });
+            await notify({ type: record.type, sessionId: record.session_id, generationId: record.generation_id });
           }
         } catch {}
         controller.enqueue(next.value);
@@ -190,7 +206,7 @@ function observeGeneration(response, request, onLifecycle) {
     async cancel(reason) {
       if (!terminal) {
         terminal = true;
-        notify({ type: "abort", sessionId: request.headers.get("x-wavebird-session-id"), generationId: request.headers.get("x-wavebird-generation-id") });
+        await notify({ type: "abort", sessionId: request.headers.get("x-wavebird-session-id"), generationId: request.headers.get("x-wavebird-generation-id") });
       }
       try { await reader.cancel(reason); } catch {}
     }
@@ -203,6 +219,34 @@ export function createPublisherServer(inputOptions) {
   const placementFetch = boundedFetcher();
   const consentFetch = boundedFetcher();
   const generationReportFetch = boundedGenerationReporter();
+  const diagnostic = code => { try { options.onDiagnostic?.(code); } catch {} };
+  if (typeof options.turnJournal?.reconcilePending === "function") {
+    void Promise.resolve().then(() => options.turnJournal.reconcilePending(options.clientId, options.surfaceId))
+      .catch(() => diagnostic("turn_journal_unavailable"));
+  }
+  async function journalCall(operation) {
+    let timer;
+    try { return await Promise.race([
+      Promise.resolve().then(operation),
+      new Promise((_, reject) => { timer = setTimeout(() => reject(new Error("turn_journal_timeout")), 1500); })
+    ]); } finally { clearTimeout(timer); }
+  }
+  async function trustedTurn(request, sessionId, turnId) {
+    if (!ID.test(sessionId || "") || !ID.test(turnId || "")) return null;
+    let trusted;
+    try { trusted = await journalCall(() => options.sessionIdForRequest(request)); } catch { return null; }
+    return trusted === sessionId ? { projectId: options.clientId, surfaceId: options.surfaceId, sessionId, turnId } : null;
+  }
+  async function sessionGET(request) {
+    if (!options.turnJournal) return response("turn_binding_unavailable", 404);
+    if (!await authorized(request)) return response("authentication_required", 401);
+    if (!validOrigin(request, options, false)) return response("invalid_origin", 403);
+    let sessionId;
+    try { sessionId = await journalCall(() => options.sessionIdForRequest(request)); }
+    catch { diagnostic("publisher_session_unavailable"); return response("publisher_session_unavailable", 503); }
+    if (!ID.test(sessionId || "")) return response("publisher_session_unavailable", 401);
+    return Response.json({ session_id: sessionId }, { headers: { "Cache-Control": "no-store", Vary: "Cookie" } });
+  }
   const cookieName = `__Host-wavebird-preference-${options.clientId}-${options.surfaceId}`;
   const cookie = (value, ttl = PREFERENCE_TTL) => `${cookieName}=${value}; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=${ttl}`;
   const scope = request => ({ project: options.clientId, surface: options.surfaceId, version: PREFERENCE_VERSION,
@@ -229,11 +273,13 @@ export function createPublisherServer(inputOptions) {
     if (qaOutcomes.length && !options.secretKey.startsWith("sk_test_")) return response("qa_test_outcome_requires_test_key", 403);
     const input = await readPublisherJson(request);
     if (input instanceof Response) return input;
+    const turn = options.turnJournal ? await trustedTurn(request, input?.session_id, input?.turn_id) : null;
+    if (options.turnJournal && !turn) return response("publisher_turn_context_invalid", 401);
     let allowedSizes = options.allowedSizes.map(({ width, height }) => ({ width, height }));
     let allowedFormats = options.allowedFormats;
     let maxWidth = options.maxWidth;
     let maxHeight = options.maxHeight;
-    if (options.responsiveSizeSelection === true) {
+    if (options.responsiveSizeSelection !== false) {
       const bounds = input?.container_size;
       if (!bounds || !Number.isSafeInteger(bounds.width) || !Number.isSafeInteger(bounds.height) ||
           bounds.width < 1 || bounds.height < 1 || bounds.width > 8192 || bounds.height > 8192) {
@@ -253,6 +299,12 @@ export function createPublisherServer(inputOptions) {
       maxWidth = Math.min(maxWidth, bounds.width);
       maxHeight = Math.min(maxHeight, bounds.height);
     }
+    if (turn) {
+      let claimed;
+      try { claimed = await journalCall(() => options.turnJournal.claimPlacement(turn)); }
+      catch { diagnostic("turn_journal_unavailable"); return response("turn_journal_unavailable", 503); }
+      if (!claimed) return response("publisher_turn_replayed", 409);
+    }
     const sessionId = typeof input?.session_id === "string" && input.session_id.trim() ? input.session_id.trim() : crypto.randomUUID();
     const body = {
       client_id: options.clientId, session_id: sessionId, job_type: options.jobType, locale: options.locale,
@@ -260,7 +312,7 @@ export function createPublisherServer(inputOptions) {
       slot_hint: { position: options.positionHint, max_width: maxWidth, max_height: maxHeight,
         allowed_sizes: allowedSizes, presentation_version: "sponsored_moment_v2" },
       overrides: { allowed_formats: allowedFormats, timing: options.timing,
-        bidfloor: options.bidfloor ?? 0.5, bidfloor_currency: options.bidfloorCurrency ?? "EUR",
+        ...(Object.hasOwn(options, "bidfloor") ? { bidfloor: options.bidfloor, bidfloor_currency: options.bidfloorCurrency.toUpperCase() } : {}),
         gdpr_applies: options.gdprApplies === true,
         publisher: { app_name: options.publisher.app_name, app_domain: options.publisher.app_domain,
           ...(options.publisher.categories.length ? { categories: options.publisher.categories } : {}) },
@@ -269,9 +321,27 @@ export function createPublisherServer(inputOptions) {
         consent_source: options.consentSource }
     };
     try {
-      return await placementFetch(`${options.base}/placements?wait_ms=1500${qaOutcomes.length ? "&test_outcome=no_fill" : ""}`, { method: "POST", headers: {
+      const result = await placementFetch(`${options.base}/placements?wait_ms=1500${qaOutcomes.length ? "&test_outcome=no_fill" : ""}`, { method: "POST", headers: {
         Authorization: `Bearer ${options.secretKey}`, "Content-Type": "application/json"
       }, body: JSON.stringify(body), cache: "no-store" });
+      if (turn && [400, 401, 403].includes(result.status)) {
+        try { await journalCall(() => options.turnJournal.releaseRejectedPlacement(turn)); }
+        catch { diagnostic("turn_journal_unavailable"); }
+      }
+      if (turn && result.status === 200) {
+        let payload;
+        try { payload = await result.clone().json(); } catch {}
+        const jobId = payload?.job_id;
+        if (JOB_ID.test(jobId || "")) {
+          try { await journalCall(() => options.turnJournal.bind(turn, jobId)); }
+          catch { diagnostic("turn_binding_unavailable"); return response("turn_binding_unavailable", 502); }
+        } else if (!(payload?.decision?.fill === false &&
+                     Object.hasOwn(payload ?? {}, "placement") && payload.placement === null)) {
+          diagnostic("turn_binding_unavailable");
+          return response("turn_binding_unavailable", 502);
+        }
+      }
+      return result;
     } catch { return response("wavebird_placement_unavailable", 502); }
   }
   async function consentGET(request) {
@@ -336,8 +406,24 @@ export function createPublisherServer(inputOptions) {
   async function withGeneration({ request, run, onLifecycle }) {
     if (!await authorized(request)) return response("authentication_required", 401);
     if (!validOrigin(request, options)) return response("invalid_origin", 403);
+    const turn = options.turnJournal ? await trustedTurn(request,
+      request.headers.get("x-wavebird-session-id"), request.headers.get("x-wavebird-generation-id")) : null;
+    if (options.turnJournal && !turn) return response("publisher_turn_context_invalid", 401);
+    if (turn) {
+      let claimed;
+      try { claimed = await journalCall(() => options.turnJournal.claimGeneration(turn)); }
+      catch { diagnostic("turn_journal_unavailable"); return run(request.signal); }
+      if (!claimed) return response("publisher_turn_replayed", 409);
+      try { await journalCall(() => options.turnJournal.phase(turn, "started")); }
+      catch { diagnostic("turn_journal_unavailable"); return run(request.signal); }
+    }
     const result = await generationTransport({ request, run });
-    return observeGeneration(result, request, onLifecycle);
+    const critical = turn ? async event => {
+      if (event.type === "started") return;
+      try { await journalCall(() => options.turnJournal.phase(turn, event.type === "done" ? "finished" : "failed")); }
+      catch { diagnostic("turn_journal_unavailable"); }
+    } : null;
+    return observeGeneration(result, request, onLifecycle, critical);
   }
   async function reportGeneration(jobId, event) {
     if (!JOB_ID.test(jobId) || !["started", "finished", "failed"].includes(event)) throw new Error("invalid_generation_report");
@@ -345,5 +431,5 @@ export function createPublisherServer(inputOptions) {
       method: "POST", headers: { Authorization: `Bearer ${options.secretKey}`, "Content-Type": "application/json" }, body: "{}"
     });
   }
-  return { placementPOST, consentGET, consentPOST, withGeneration, reportGeneration };
+  return { sessionGET, placementPOST, consentGET, consentPOST, withGeneration, reportGeneration };
 }

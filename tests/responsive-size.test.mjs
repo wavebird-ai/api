@@ -1,6 +1,11 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { createPublisherServer } from "../dist/server.js";
+import { pathToFileURL } from "node:url";
+
+const serverAsset = process.env.WAVEBIRD_JS_SERVER_ASSET
+  ? pathToFileURL(process.env.WAVEBIRD_JS_SERVER_ASSET).href
+  : new URL("../dist/server.js", import.meta.url).href;
+const { createPublisherServer } = await import(serverAsset);
 
 const saved = {
   clientId: "wbproj_responsive_test", secretKey: "sk_test_server_only",
@@ -11,7 +16,6 @@ const saved = {
   publisher: { app_name: "Publisher Test", app_domain: "publisher.example", categories: [] },
   allowedFormats: ["banner"], positionHint: "between", maxWidth: 728, maxHeight: 250,
   allowedSizes: [{ width: 728, height: 90 }, { width: 320, height: 50 }, { width: 300, height: 250 }],
-  responsiveSizeSelection: true,
 };
 const request = (width, height = 250, headers = {}, format = "auto") => new Request("https://publisher.example/api/sponsor-slot", {
   method: "POST", headers: { host: "publisher.example", origin: "https://publisher.example", authorization: "Session publisher", "sec-fetch-site": "same-origin", ...headers },

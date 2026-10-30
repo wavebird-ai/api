@@ -35,10 +35,12 @@ export async function plan(argv) {
   const files = [
     [join(example, "lib", `publisher.${ext}`), join(base, "lib", `publisher.${ext}`)],
     [join(example, "lib", `auth.${ext}`), join(base, "lib", `auth.${ext}`)],
+    [join(example, "lib", `turn-store.${ext}`), join(base, "lib", `turn-store.${ext}`)],
     [resolve(packageRoot, "templates", `model.${ext}`), join(base, "lib", `model.${ext}`)],
     [join(example, "app", "api", "generate", `route.${ext}`), join(appPath, "api", "generate", `route.${ext}`)],
     [join(example, "app", "api", "sponsor-slot", `route.${ext}`), join(appPath, "api", "sponsor-slot", `route.${ext}`)],
     [join(example, "app", "api", "sponsor-consent", `route.${ext}`), join(appPath, "api", "sponsor-consent", `route.${ext}`)],
+    [join(example, "app", "api", "sponsor-session", `route.${ext}`), join(appPath, "api", "sponsor-session", `route.${ext}`)],
     [resolve(packageRoot, "templates", `WavebirdPlacement.${componentExt}`), join(base, "components", `WavebirdPlacement.${componentExt}`)],
     [resolve(packageRoot, "templates", "NEXT-SETUP.md"), join(projectRoot, "WAVEBIRD-SETUP.md")]
   ];

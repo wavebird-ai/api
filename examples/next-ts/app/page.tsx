@@ -10,8 +10,16 @@ export default function Page() {
   const [answer, setAnswer] = useState("");
   useEffect(() => {
     if (!slot.current) return;
-    const current = createPublisherAds({
-      target: slot.current,
+    const target = slot.current;
+    const controller = new AbortController();
+    let disposed = false;
+    let current: PublisherAds | null = null;
+    void fetch("/api/sponsor-session", { cache: "no-store", signal: controller.signal }).then(async response => {
+      if (!response.ok) return;
+      const sessionId = (await response.json()).session_id;
+      if (disposed || !/^[A-Za-z0-9_-]{1,128}$/.test(sessionId)) return;
+      current = createPublisherAds({
+      target,
       clientId: "wbproj_replace_from_dashboard",
       surfaceId: "chat_assistant",
       jobType: "chat",
@@ -19,13 +27,16 @@ export default function Page() {
       consentMode: "wavebird_consent",
       userId: "replace-with-authenticated-user-id",
       conversationId: "replace-with-current-conversation-id",
+      sessionId,
+      turnBinding: true,
       rendererUrl: "https://api.wavebird.ai/v1/render.js",
       placementEndpoint: "/api/sponsor-slot",
       consentEndpoint: "/api/sponsor-consent",
       privacySettingsTarget: "#privacy-settings"
-    });
-    ads.current = current;
-    return () => { abort.current?.abort(); current.dispose(); ads.current = null; };
+      });
+      ads.current = current;
+    }).catch(() => {});
+    return () => { disposed = true; controller.abort(); abort.current?.abort(); current?.dispose(); ads.current = null; };
   }, []);
   async function generate() {
     if (!ads.current) return;

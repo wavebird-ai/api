@@ -1,6 +1,6 @@
 {
   "name": "@wavebirdai/api",
-  "version": "0.1.0-beta.3",
+  "version": "0.1.0-beta.4",
   "private": false,
   "type": "module",
   "description": "Banner, Native, and Clip publisher integration for the wavebird API",

@@ -193,7 +193,7 @@ def mount_fastapi(app: FastAPI, server: PublisherServer,
             except Exception:
                 pass
     if turn_journal_path:
-        app.add_event_handler("startup", coordinator.reconcile_pending)
+        app.router.add_event_handler("startup", coordinator.reconcile_pending)
 
     @app.get("/api/wavebird/browser.js")
     async def browser_module() -> Response:

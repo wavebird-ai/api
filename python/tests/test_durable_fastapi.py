@@ -120,7 +120,11 @@ class DurableFastApiTests(unittest.TestCase):
                 self.assertEqual(set(attempts), {"started"}, "terminal report waits for accepted start")
                 allow_started_success = True
                 restarted = create_app(server, session_id_for_request, existing_generation, turn_journal_path=path)
-                await restarted.router.startup()
+                if hasattr(restarted.router, "startup"):
+                    await restarted.router.startup()
+                else:
+                    async with restarted.router.lifespan_context(restarted):
+                        pass
                 for _ in range(100):
                     if attempts[-2:] == ["started", "finished"]:
                         break

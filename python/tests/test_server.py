@@ -24,6 +24,38 @@ def request(origin, body=None, headers=None, method="POST"):
 
 
 class ServerTests(unittest.TestCase):
+    def test_saved_sizes_provide_responsive_envelope_without_numeric_caps(self):
+        values = config().__dict__.copy()
+        values.pop("max_width")
+        values.pop("max_height")
+        values["responsive_size_selection"] = True
+        cfg = PublisherConfig(**values)
+        calls = []
+
+        def transport(url, body, key, timeout):
+            calls.append(json.loads(body))
+            return PublisherResponse(200, {}, b'{"decision":{"fill":false}}')
+
+        response = PublisherServer(cfg, transport).placement_post(request(
+            "https://publisher-one.example", {"session_id": "s", "container_size": {"width": 320, "height": 50}}))
+        self.assertEqual(response.status, 200)
+        self.assertEqual(calls[0]["slot_hint"]["max_width"], 320)
+        self.assertEqual(calls[0]["slot_hint"]["max_height"], 50)
+
+    def test_advanced_cap_below_saved_size_returns_no_fit(self):
+        cfg = replace(config(), max_width=300, responsive_size_selection=True)
+        response = PublisherServer(cfg, lambda *_: self.fail("no upstream on no-fit")).placement_post(request(
+            "https://publisher-one.example", {"session_id": "s", "container_size": {"width": 320, "height": 50}}))
+        self.assertEqual(response.json()["decision"]["reason"], "no_fit")
+        invalid = PublisherServer(cfg, lambda *_: self.fail("no upstream on invalid size")).placement_post(request(
+            "https://publisher-one.example", {"session_id": "s", "container_size": {"width": 0, "height": 50}}))
+        self.assertEqual(invalid.status, 400)
+
+    def test_invalid_advanced_caps_fail_closed(self):
+        for width in (False, 0, -1, "320"):
+            with self.subTest(width=width), self.assertRaisesRegex(ValueError, "publisher_envelope_invalid"):
+                replace(config(), max_width=width)
+
     def test_opt_in_responsive_selection_uses_saved_format_sizes_and_no_fit_skips_upstream(self):
         calls = []
         cfg = replace(config(), allowed_formats=("banner", "native", "clip"),

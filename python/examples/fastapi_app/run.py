@@ -59,8 +59,6 @@ def configured_app():
         size_formats=size_formats,
         responsive_size_selection=True,
         position_hint=_required("WAVEBIRD_POSITION_HINT"),
-        max_width=max(width for width, _ in sizes),
-        max_height=max(height for _, height in sizes),
         gdpr_applies=gdpr == "true",
         authorize=authorize_publisher_request,
     )

@@ -60,8 +60,8 @@ class PublisherConfig:
     allowed_formats: tuple[str, ...]
     allowed_sizes: tuple[tuple[int, int], ...]
     position_hint: str
-    max_width: int
-    max_height: int
+    max_width: int | None = field(default=None, kw_only=True)
+    max_height: int | None = field(default=None, kw_only=True)
     authorize: Callable[[PublisherRequest], bool]
     api_base_url: str = "https://api.wavebird.ai"
     gdpr_applies: bool = False
@@ -90,8 +90,14 @@ class PublisherConfig:
             raise ValueError("publisher_position_invalid")
         if not self.allowed_formats or any(value not in ("banner", "native", "clip") for value in self.allowed_formats):
             raise ValueError("publisher_formats_invalid")
-        if not self.allowed_sizes or any(not (type(w) is int and type(h) is int and 0 < w <= self.max_width and 0 < h <= self.max_height) for w, h in self.allowed_sizes):
+        if not self.allowed_sizes or any(not (type(w) is int and type(h) is int and w > 0 and h > 0) for w, h in self.allowed_sizes):
             raise ValueError("publisher_sizes_invalid")
+        max_width = max(w for w, _ in self.allowed_sizes) if self.max_width is None else self.max_width
+        max_height = max(h for _, h in self.allowed_sizes) if self.max_height is None else self.max_height
+        if type(max_width) is not int or type(max_height) is not int or max_width < 1 or max_height < 1:
+            raise ValueError("publisher_envelope_invalid")
+        object.__setattr__(self, "max_width", max_width)
+        object.__setattr__(self, "max_height", max_height)
         if not isinstance(self.responsive_size_selection, bool):
             raise ValueError("publisher_responsive_selection_invalid")
         if not isinstance(self.size_formats, tuple):
@@ -207,7 +213,7 @@ class PublisherServer:
         if not isinstance(session_id, str) or not session_id.strip():
             return self._reply(400, {"error": "session_id_required"})
         config = self.config
-        sizes = config.allowed_sizes
+        sizes = tuple((w, h) for w, h in config.allowed_sizes if w <= config.max_width and h <= config.max_height)
         formats = config.allowed_formats
         max_width, max_height = config.max_width, config.max_height
         if config.responsive_size_selection:
@@ -217,6 +223,8 @@ class PublisherServer:
             requested = data.get("format", "auto")
             if requested != "auto" and requested not in formats:
                 return self._reply(400, {"error": "publisher_format_invalid"})
+            if not sizes:
+                return self._reply(200, {"decision": {"fill": False, "reason": "no_fit"}, "placement": None})
             assigned = {(w, h): allowed for w, h, allowed in config.size_formats}
             fitting = [(w, h) for w, h in sizes if w <= bounds["width"] and h <= bounds["height"] and
                        (requested == "auto" or requested in assigned.get((w, h), formats))]
@@ -226,6 +234,8 @@ class PublisherServer:
             sizes = (chosen,)
             formats = tuple(fmt for fmt in formats if fmt in assigned.get(chosen, formats)) if requested == "auto" else (requested,)
             max_width, max_height = min(max_width, bounds["width"]), min(max_height, bounds["height"])
+        elif not sizes:
+            return self._reply(200, {"decision": {"fill": False, "reason": "no_fit"}, "placement": None})
         return self._upstream("/placements?wait_ms=1500", {
             "client_id": config.client_id, "session_id": session_id, "job_type": config.job_type, "locale": config.locale,
             "slots_requested": 1, "placement_key": config.placement_key,

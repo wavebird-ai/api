@@ -20,8 +20,14 @@ function loadRenderer(url) {
 
 export function createPublisherAds(options) {
   const target = options.target;
-  if (!target || !options.userId || !options.conversationId) throw new Error("Application container and session are required");
+  const requiredText = value => typeof value === "string" && value.trim().length > 0;
+  if (!target || !requiredText(options.userId) || !requiredText(options.conversationId))
+    throw new Error("Application container and session are required");
   if (!["chat", "code", "image", "voice", "agent"].includes(options.jobType)) throw new Error("publisher_job_invalid");
+  if (typeof options.clientId !== "string" || !options.clientId.startsWith("wbproj_"))
+    throw new Error("publisher_project_invalid");
+  if (typeof options.surfaceId !== "string" || !/^[A-Za-z0-9_-]{1,128}$/.test(options.surfaceId))
+    throw new Error("publisher_placement_invalid");
   const turnBinding = options.turnBinding === true;
   const validId = value => typeof value === "string" && /^[A-Za-z0-9_-]{1,128}$/.test(value);
   if (turnBinding && !validId(options.sessionId)) throw new Error("publisher_trusted_session_required");
@@ -64,7 +70,8 @@ export function createPublisherAds(options) {
   const prepare = () => { if (!disposed && sponsor) void sponsor.prepare().catch(() => {}); };
   function setConversation(next) {
     if (disposed) return;
-    if (!next.userId || !next.conversationId) throw new Error("Application session is required");
+    if (!requiredText(next?.userId) || !requiredText(next?.conversationId))
+      throw new Error("Application session is required");
     if (turnBinding && !validId(next.sessionId)) throw new Error("publisher_trusted_session_required");
     if (next.userId === binding.userId && next.conversationId === binding.conversationId &&
         (!turnBinding || next.sessionId === binding.sessionId)) return;

@@ -8,8 +8,21 @@ const browserAsset = process.env.WAVEBIRD_JS_BROWSER_ASSET
 const { createPublisherAds } = await import(browserAsset);
 
 test("browser refuses noncanonical workload before mounting", () => {
-  assert.throws(() => createPublisherAds({ target: { append() {} }, userId: "u", conversationId: "c",
+  assert.throws(() => createPublisherAds({ target: { append() {} }, clientId: "wbproj_test", surfaceId: "chat_assistant", userId: "u", conversationId: "c",
     jobType: "image_generation" }), /publisher_job_invalid/);
+});
+
+test("browser rejects missing and malformed required identity before mounting", () => {
+  const valid = { target: { append() {} }, clientId: "wbproj_test", surfaceId: "chat_assistant",
+    jobType: "chat", userId: "user_test", conversationId: "conversation_test" };
+  for (const field of ["clientId", "surfaceId", "userId", "conversationId"]) {
+    for (const value of [undefined, null, false, 0, "", "  ", { toString: () => "synthetic" }]) {
+      const options = { ...valid, [field]: value };
+      assert.throws(() => createPublisherAds(options), /publisher_|Application container and session/, `${field}: ${String(value)}`);
+    }
+  }
+  assert.throws(() => createPublisherAds({ ...valid, clientId: "other_project" }), /publisher_project_invalid/);
+  assert.throws(() => createPublisherAds({ ...valid, surfaceId: "invalid domain" }), /publisher_placement_invalid/);
 });
 
 test("opt-in turn binding uses the host session and rejects cross-context reuse", async () => {
@@ -28,9 +41,9 @@ test("opt-in turn binding uses the host session and rejects cross-context reuse"
     addEventListener() {}, removeEventListener() {},
   };
   try {
-    assert.throws(() => createPublisherAds({ target: { append() {} }, userId: "u", conversationId: "c",
+    assert.throws(() => createPublisherAds({ target: { append() {} }, clientId: "wbproj_test", surfaceId: "chat_assistant", userId: "u", conversationId: "c",
       jobType: "chat", turnBinding: true }), /publisher_trusted_session_required/);
-    const ads = createPublisherAds({ target: { append() {} }, userId: "u", conversationId: "c",
+    const ads = createPublisherAds({ target: { append() {} }, clientId: "wbproj_test", surfaceId: "chat_assistant", userId: "u", conversationId: "c",
       jobType: "chat", sessionId: "trusted_session", turnBinding: true });
     await ads.ready;
     assert.equal(received[0].sessionId, "trusted_session");
@@ -44,6 +57,8 @@ test("opt-in turn binding uses the host session and rejects cross-context reuse"
       consume: response => response.text(),
     });
     assert.equal(result, "model result");
+    assert.throws(() => ads.setConversation({ userId: { toString: () => "another" }, conversationId: "c", sessionId: "next_trusted_session" }), /Application session is required/);
+    assert.throws(() => ads.setConversation({ userId: "another", conversationId: " ", sessionId: "next_trusted_session" }), /Application session is required/);
     assert.throws(() => ads.setConversation({ userId: "another", conversationId: "c", sessionId: "trusted_session" }), /publisher_session_reuse/);
     ads.setConversation({ userId: "another", conversationId: "c", sessionId: "next_trusted_session" });
     assert.equal(received.at(-1).sessionId, "next_trusted_session");

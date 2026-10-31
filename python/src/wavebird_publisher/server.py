@@ -74,7 +74,7 @@ class PublisherConfig:
         return self.server_key or self.server_test_key
 
     def __post_init__(self) -> None:
-        if not self.client_id.startswith("wbproj_"):
+        if not isinstance(self.client_id, str) or not self.client_id.startswith("wbproj_"):
             raise ValueError("publisher_project_invalid")
         if self.server_key and self.server_test_key and self.server_key != self.server_test_key:
             raise ValueError("publisher_server_key_conflict")
@@ -82,10 +82,14 @@ class PublisherConfig:
             raise ValueError("publisher_server_key_invalid")
         if len(self.preference_secret.encode()) < 32 or not callable(self.authorize):
             raise ValueError("publisher_security_config_invalid")
-        if not _ID.fullmatch(self.surface_id) or not _PLACEMENT_KEY.fullmatch(self.placement_key):
+        if not isinstance(self.surface_id, str) or not isinstance(self.placement_key, str) or not _ID.fullmatch(self.surface_id) or not _PLACEMENT_KEY.fullmatch(self.placement_key):
             raise ValueError("publisher_placement_invalid")
+        if self.job_type not in ("chat", "code", "image", "voice", "agent") or not isinstance(self.locale, str) or not self.locale:
+            raise ValueError("publisher_job_invalid")
         if self.timing not in ("before", "during", "after") or self.consent_mode not in ("wavebird_consent", "own_cmp"):
             raise ValueError("publisher_lifecycle_invalid")
+        if not isinstance(self.gdpr_applies, bool):
+            raise ValueError("publisher_gdpr_invalid")
         if self.position_hint not in ("above", "below", "sidebar", "between"):
             raise ValueError("publisher_position_invalid")
         if not self.allowed_formats or any(value not in ("banner", "native", "clip") for value in self.allowed_formats):
@@ -110,7 +114,7 @@ class PublisherConfig:
             if (width, height) not in self.allowed_sizes or (width, height) in seen_sizes or not isinstance(formats, tuple) or not formats or any(not isinstance(fmt, str) for fmt in formats) or len(set(formats)) != len(formats) or any(fmt not in self.allowed_formats for fmt in formats):
                 raise ValueError("publisher_size_formats_invalid")
             seen_sizes.add((width, height))
-        if not self.public_origins or len(set(self.public_origins)) != len(self.public_origins):
+        if not self.public_origins or len(self.public_origins) > 8 or len(set(self.public_origins)) != len(self.public_origins):
             raise ValueError("publisher_origins_invalid")
         for origin in self.public_origins:
             parsed = urlsplit(origin)

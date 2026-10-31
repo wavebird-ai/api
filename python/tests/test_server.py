@@ -24,6 +24,18 @@ def request(origin, body=None, headers=None, method="POST"):
 
 
 class ServerTests(unittest.TestCase):
+    def test_locale_requires_nonempty_string(self):
+        for value in ("", None, 0, False):
+            with self.subTest(value=value), self.assertRaisesRegex(ValueError, "publisher_job_invalid"):
+                replace(config(), locale=value)
+
+    def test_project_and_placement_identifiers_require_strings(self):
+        for field, value, error in (("client_id", 42, "publisher_project_invalid"),
+                                    ("surface_id", 42, "publisher_placement_invalid"),
+                                    ("placement_key", 42, "publisher_placement_invalid")):
+            with self.subTest(field=field), self.assertRaisesRegex(ValueError, error):
+                replace(config(), **{field: value})
+
     def test_saved_sizes_provide_responsive_envelope_without_numeric_caps(self):
         values = config().__dict__.copy()
         values.pop("max_width")
@@ -292,6 +304,26 @@ class ServerTests(unittest.TestCase):
             replace(config(), server_test_key="", server_key="pk_publishable_wrong_scope")
         with self.assertRaisesRegex(ValueError, "publisher_server_key_conflict"):
             replace(config(), server_key="sk_live_other")
+
+    def test_public_origin_count_matches_shared_package_limit(self):
+        origins = tuple(f"https://h{index}.example" for index in range(9))
+        self.assertEqual(len(replace(config(), public_origins=origins[:8]).public_origins), 8)
+        with self.assertRaisesRegex(ValueError, "publisher_origins_invalid"):
+            replace(config(), public_origins=origins)
+
+    def test_job_type_is_canonical_before_any_upstream_request(self):
+        for job_type in ("chat", "code", "image", "voice", "agent"):
+            self.assertEqual(replace(config(), job_type=job_type).job_type, job_type)
+        for job_type in (None, "", "image_generation", "unsupported"):
+            with self.assertRaisesRegex(ValueError, "publisher_job_invalid"):
+                replace(config(), job_type=job_type)
+
+    def test_explicit_gdpr_flag_requires_boolean(self):
+        for gdpr_applies in (False, True):
+            self.assertIs(replace(config(), gdpr_applies=gdpr_applies).gdpr_applies, gdpr_applies)
+        for gdpr_applies in (None, 0, 1, "true"):
+            with self.assertRaisesRegex(ValueError, "publisher_gdpr_invalid"):
+                replace(config(), gdpr_applies=gdpr_applies)
 
     def test_wildcard_origin_rejected(self):
         with self.assertRaisesRegex(ValueError, "publisher_origins_invalid"):

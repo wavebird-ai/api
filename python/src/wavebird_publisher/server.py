@@ -147,12 +147,18 @@ def default_transport(url: str, body: bytes, key: str, timeout: float) -> Publis
             data = result.read(256 * 1024 + 1)
             if len(data) > 256 * 1024:
                 raise ValueError("wavebird_response_too_large")
-            return PublisherResponse(result.status, {"Content-Type": result.headers.get("Content-Type", "application/json")}, data)
+            headers = {"Content-Type": result.headers.get("Content-Type", "application/json")}
+            if request_id := result.headers.get("x-request-id"):
+                headers["x-request-id"] = request_id
+            return PublisherResponse(result.status, headers, data)
     except HTTPError as error:
         data = error.read(256 * 1024 + 1)
         if len(data) > 256 * 1024:
             raise ValueError("wavebird_response_too_large") from error
-        return PublisherResponse(error.code, {"Content-Type": error.headers.get("Content-Type", "application/json")}, data)
+        headers = {"Content-Type": error.headers.get("Content-Type", "application/json")}
+        if request_id := error.headers.get("x-request-id"):
+            headers["x-request-id"] = request_id
+        return PublisherResponse(error.code, headers, data)
 
 
 class PublisherServer:
@@ -201,7 +207,10 @@ class PublisherServer:
             result = self.transport(self.config.api_base_url.rstrip("/").removesuffix("/v1") + "/v1" + path, json.dumps(payload, separators=(",", ":")).encode(), self.config.resolved_server_key, 5)
             if len(result.body) > 256 * 1024:
                 raise ValueError("wavebird_response_too_large")
-            return PublisherResponse(result.status, {"Content-Type": result.headers.get("Content-Type", "application/json"), "Cache-Control": "no-store"}, result.body)
+            headers = {"Content-Type": result.headers.get("Content-Type", "application/json"), "Cache-Control": "no-store"}
+            if request_id := result.headers.get("x-request-id"):
+                headers["x-request-id"] = request_id
+            return PublisherResponse(result.status, headers, result.body)
         except (OSError, URLError, TimeoutError, ValueError):
             return self._reply(502, {"error": "wavebird_unavailable"})
         finally:

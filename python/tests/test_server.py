@@ -1,10 +1,15 @@
 import json
 import unittest
+from email.message import Message
+from io import BytesIO
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from threading import Event, Lock
+from unittest.mock import patch
+from urllib.error import HTTPError
 
 from wavebird_publisher import PublisherConfig, PublisherRequest, PublisherResponse, PublisherServer
+from wavebird_publisher.server import default_transport
 
 
 def config(origin="https://publisher-one.example", client="wbproj_one"):
@@ -24,6 +29,48 @@ def request(origin, body=None, headers=None, method="POST"):
 
 
 class ServerTests(unittest.TestCase):
+    def test_default_transport_keeps_only_safe_response_headers_on_success_and_error(self):
+        headers = Message()
+        headers["Content-Type"] = "application/json"
+        headers["X-Request-Id"] = "req_transport"
+        headers["X-Unsafe"] = "private"
+
+        class Reply(BytesIO):
+            status = 200
+            def __init__(self):
+                super().__init__(b"{}")
+                self.headers = headers
+
+        class Opener:
+            def __init__(self, result):
+                self.result = result
+            def open(self, *_args, **_kwargs):
+                return self.result
+
+        with patch("wavebird_publisher.server.build_opener", return_value=Opener(Reply())):
+            success = default_transport("https://api.wavebird.ai/v1/placements", b"{}", "sk_test_example", 5)
+        with patch("wavebird_publisher.server.build_opener", return_value=Opener(
+            HTTPError("https://api.wavebird.ai/v1/placements", 409, "conflict", headers, BytesIO(b"{}")))):
+            error = default_transport("https://api.wavebird.ai/v1/placements", b"{}", "sk_test_example", 5)
+        for response, status in ((success, 200), (error, 409)):
+            self.assertEqual(response.status, status)
+            self.assertEqual(response.headers.get("x-request-id"), "req_transport")
+            self.assertNotIn("X-Unsafe", response.headers)
+
+    def test_placement_relays_request_id_without_other_upstream_headers(self):
+        origin = "https://publisher-one.example"
+        for upstream_headers, expected in (
+            ({"Content-Type": "application/json", "x-request-id": "req_probe", "X-Unsafe": "private"}, "req_probe"),
+            ({"Content-Type": "application/json", "X-Unsafe": "private"}, None),
+        ):
+            with self.subTest(request_id=expected):
+                server = PublisherServer(config(), lambda *_: PublisherResponse(
+                    200, upstream_headers, b'{"decision":{"fill":false},"placement":null}'))
+                response = server.placement_post(request(origin, {"session_id": "s"}))
+                self.assertEqual(response.status, 200)
+                self.assertEqual(response.headers.get("x-request-id"), expected)
+                self.assertNotIn("X-Unsafe", response.headers)
+
     def test_required_server_identity_rejects_wrong_types_and_empty_values(self):
         for override in (
             {"server_test_key": 42},

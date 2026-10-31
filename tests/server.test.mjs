@@ -32,6 +32,42 @@ test("unknown server configuration fields fail closed", () => {
   assert.throws(() => createPublisherServer({ ...saved, allowedSizes: [{ width: 728, height: 90, unknownOption: true }] }), /publisher_sizes_invalid/);
 });
 
+test("preference secret is validated at setup using the same UTF-8 byte rule as Python", async () => {
+  for (const preferenceSecret of [undefined, null, "short", "🔐".repeat(7)]) {
+    assert.throws(() => createPublisherServer({ ...saved, preferenceSecret }), /preference_secret_required/);
+  }
+  const server = createPublisherServer({ ...saved, preferenceSecret: "🔐".repeat(8) });
+  await withFetch(async (_url, init) => Response.json({ authoritative_consent: {
+    lifecycle_state: JSON.parse(init.body).lifecycle_state, revision: 1,
+  } }), async () => {
+    const result = await server.consentPOST(routeRequest("/api/sponsor-consent", {
+      session_id: "session_utf8", lifecycle_state: "granted", revision: 1, remember_for_30_days: true,
+    }));
+    assert.equal(result.status, 200);
+    assert.match(result.headers.get("set-cookie"), /Max-Age=/);
+  });
+});
+
+test("server configuration accepts only canonical v1 workload names", () => {
+  for (const jobType of ["chat", "code", "image", "voice", "agent"])
+    assert.doesNotThrow(() => createPublisherServer({ ...saved, jobType }));
+  for (const jobType of [undefined, null, "", "image_generation", "unsupported"])
+    assert.throws(() => createPublisherServer({ ...saved, jobType }), /publisher_job_invalid/);
+});
+
+test("project and placement identifiers require strings before pattern validation", () => {
+  assert.throws(() => createPublisherServer({ ...saved, clientId: { toString: () => "wbproj_spoof" } }), /publisher_project_invalid/);
+  assert.throws(() => createPublisherServer({ ...saved, surfaceId: 42 }), /publisher_placement_invalid/);
+  assert.throws(() => createPublisherServer({ ...saved, placementKey: { toString: () => "default" } }), /publisher_placement_invalid/);
+});
+
+test("explicit GDPR policy flag must be a boolean", () => {
+  for (const gdprApplies of [undefined, false, true])
+    assert.doesNotThrow(() => createPublisherServer({ ...saved, gdprApplies }));
+  for (const gdprApplies of [null, 0, 1, "true"])
+    assert.throws(() => createPublisherServer({ ...saved, gdprApplies }), /publisher_gdpr_invalid/);
+});
+
 const routeRequest = (path, body, headers = {}) => new Request(`https://publisher.example${path}`, {
   method: body === undefined ? "GET" : "POST",
   headers: { host: "publisher.example", authorization: "Session publisher", origin: "https://publisher.example", "sec-fetch-site": "same-origin", ...headers },
@@ -192,6 +228,8 @@ test("saved Banner configuration drives the existing REST placement payload", as
   assert.deepEqual(body.slot_hint.allowed_sizes, [{ width: 728, height: 90 }]);
   assert.deepEqual(body.overrides.allowed_formats, ["banner"]);
   assert.equal(body.overrides.timing, "during");
+  assert.equal(Object.hasOwn(body.overrides, "gdpr_applies"), false);
+  assert.equal(body.consent.gdpr_applies, true);
   assert.equal(Object.hasOwn(body.overrides, "bidfloor"), false);
   assert.equal(Object.hasOwn(body.overrides, "bidfloor_currency"), false);
   assert.equal(body.overrides.publisher.app_domain, "publisher.example");
@@ -221,7 +259,7 @@ test("explicit zero floor is preserved while incomplete or malformed overrides f
 });
 
 test("saved Clip configuration uses the package transport without broadening Banner or Native scope", async () => {
-  const clip = createPublisherServer({ ...saved, timing: "after", jobType: "image_generation",
+  const clip = createPublisherServer({ ...saved, timing: "after", jobType: "image",
     allowedFormats: ["clip"], maxWidth: 640, maxHeight: 360,
     allowedSizes: [{ width: 640, height: 360, formats: ["clip"] }] });
   const calls = [];

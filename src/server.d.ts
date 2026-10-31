@@ -43,7 +43,7 @@ export type PublisherServerOptions = {
   publicOrigins: string[];
   surfaceId: string;
   placementKey: string;
-  jobType: string;
+  jobType: "chat" | "code" | "image" | "voice" | "agent";
   locale: string;
   timing: "before" | "during" | "after";
   consentMode: "wavebird_consent" | "own_cmp";

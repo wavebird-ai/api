@@ -21,6 +21,7 @@ function loadRenderer(url) {
 export function createPublisherAds(options) {
   const target = options.target;
   if (!target || !options.userId || !options.conversationId) throw new Error("Application container and session are required");
+  if (!["chat", "code", "image", "voice", "agent"].includes(options.jobType)) throw new Error("publisher_job_invalid");
   const turnBinding = options.turnBinding === true;
   const validId = value => typeof value === "string" && /^[A-Za-z0-9_-]{1,128}$/.test(value);
   if (turnBinding && !validId(options.sessionId)) throw new Error("publisher_trusted_session_required");
@@ -152,7 +153,7 @@ export function createPublisherAds(options) {
                 if (typeof record.data !== "string" || record.data.length > 21848 || !/^[A-Za-z0-9+/]*={0,2}$/.test(record.data)) throw new Error("generation_bytes_invalid");
                 const raw = atob(record.data), bytes = Uint8Array.from(raw, value => value.charCodeAt(0));
                 controller.enqueue(bytes);
-                if (timing !== "before" && !["image", "image_generation"].includes(options.jobType)) event(job, "progress");
+                if (timing !== "before" && options.jobType !== "image") event(job, "progress");
                 return;
               }
               if (["done", "error", "abort"].includes(record.type)) {

@@ -14,7 +14,7 @@ export function createPublisherAds(options: {
   target: HTMLElement;
   clientId: string;
   surfaceId: string;
-  jobType: string;
+  jobType: "chat" | "code" | "image" | "voice" | "agent";
   userId: string;
   conversationId: string;
   /** Opt-in successor contract: a session ID supplied by the host's authenticated context. */

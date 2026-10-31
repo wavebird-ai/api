@@ -24,16 +24,18 @@ function normalizeOptions(options) {
   if (typeof window !== "undefined") throw new Error("publisher_server_only");
   if (options && Object.keys(options).some(key => !SERVER_OPTION_KEYS.has(key))) throw new Error("publisher_option_unknown");
   if (!options || typeof options.authorize !== "function") throw new Error("publisher_authorize_required");
+  if (typeof options.preferenceSecret !== "string" || new TextEncoder().encode(options.preferenceSecret).byteLength < 32) throw new Error("preference_secret_required");
   if ((options.turnJournal === undefined) !== (options.sessionIdForRequest === undefined) ||
       (options.turnJournal !== undefined && (typeof options.sessionIdForRequest !== "function" ||
         ["claimPlacement", "releaseRejectedPlacement", "bind", "claimGeneration", "phase"].some(name => typeof options.turnJournal?.[name] !== "function"))))
     throw new Error("publisher_turn_journal_invalid");
-  if (!String(options.clientId || "").startsWith("wbproj_")) throw new Error("publisher_project_invalid");
+  if (typeof options.clientId !== "string" || !options.clientId.startsWith("wbproj_")) throw new Error("publisher_project_invalid");
   if (!String(options.secretKey || "").trim()) throw new Error("publisher_server_key_required");
   if (!/^sk_(?:test|live)_/.test(options.secretKey)) throw new Error("publisher_server_key_invalid");
-  if (!ID.test(options.surfaceId || "") || !PLACEMENT_KEY.test(options.placementKey || "")) throw new Error("publisher_placement_invalid");
+  if (typeof options.surfaceId !== "string" || typeof options.placementKey !== "string" || !ID.test(options.surfaceId) || !PLACEMENT_KEY.test(options.placementKey)) throw new Error("publisher_placement_invalid");
   if (!["before", "during", "after"].includes(options.timing)) throw new Error("publisher_timing_invalid");
   if (!["wavebird_consent", "own_cmp"].includes(options.consentMode)) throw new Error("publisher_consent_mode_invalid");
+  if (options.gdprApplies !== undefined && typeof options.gdprApplies !== "boolean") throw new Error("publisher_gdpr_invalid");
   if (!Array.isArray(options.allowedFormats) || options.allowedFormats.length === 0 || options.allowedFormats.some(value => !["banner", "native", "clip"].includes(value))) throw new Error("publisher_formats_invalid");
   if (!["above", "below", "sidebar", "between"].includes(options.positionHint)) throw new Error("publisher_position_invalid");
   if (!Array.isArray(options.allowedSizes) || options.allowedSizes.length === 0 || options.allowedSizes.some(size => !size || typeof size !== "object" || Object.keys(size).some(key => !["width", "height", "formats"].includes(key)) || !Number.isSafeInteger(size.width) || !Number.isSafeInteger(size.height) || size.width < 1 || size.height < 1 ||
@@ -48,7 +50,7 @@ function normalizeOptions(options) {
     throw new Error("publisher_bidfloor_override_invalid");
   if (options.responsiveSizeSelection !== undefined && typeof options.responsiveSizeSelection !== "boolean") throw new Error("publisher_responsive_selection_invalid");
   if (!options.publisher || typeof options.publisher !== "object" || Object.keys(options.publisher).some(key => !["app_name", "app_domain", "categories"].includes(key)) || typeof options.publisher.app_name !== "string" || typeof options.publisher.app_domain !== "string" || !Array.isArray(options.publisher.categories)) throw new Error("publisher_identity_invalid");
-  if (typeof options.jobType !== "string" || !options.jobType || typeof options.locale !== "string" || !options.locale) throw new Error("publisher_job_invalid");
+  if (!["chat", "code", "image", "voice", "agent"].includes(options.jobType) || typeof options.locale !== "string" || !options.locale) throw new Error("publisher_job_invalid");
   const base = String(options.apiBaseUrl || "https://api.wavebird.ai").trim().replace(/\/+$/, "").replace(/\/v1$/, "") + "/v1";
   if (!/^https:\/\//.test(base)) throw new Error("publisher_api_https_required");
   {
@@ -262,7 +264,7 @@ export function createPublisherServer(inputOptions) {
   const scope = request => ({ project: options.clientId, surface: options.surfaceId, version: PREFERENCE_VERSION,
     profile: options.consentMode === "wavebird_consent" ? "wavebird_dialog" : "publisher_custom", origin: publicOrigin(request, options) });
   async function preferenceKey() {
-    if (!options.preferenceSecret || options.preferenceSecret.length < 32) throw new Error("preference_secret_required");
+    if (new TextEncoder().encode(options.preferenceSecret).byteLength < 32) throw new Error("preference_secret_required");
     return crypto.subtle.importKey("raw", new TextEncoder().encode(options.preferenceSecret), { name: "HMAC", hash: "SHA-256" }, false, ["sign", "verify"]);
   }
   async function signPreference(request, state) {
@@ -326,7 +328,6 @@ export function createPublisherServer(inputOptions) {
         allowed_sizes: allowedSizes, presentation_version: "sponsored_moment_v2" },
       overrides: { allowed_formats: allowedFormats, timing: options.timing,
         ...(Object.hasOwn(options, "bidfloor") ? { bidfloor: options.bidfloor, bidfloor_currency: options.bidfloorCurrency.toUpperCase() } : {}),
-        gdpr_applies: options.gdprApplies === true,
         publisher: { app_name: options.publisher.app_name, app_domain: options.publisher.app_domain,
           ...(options.publisher.categories.length ? { categories: options.publisher.categories } : {}) },
         ...(options.blockedCategories?.length ? { blocked_categories: options.blockedCategories } : {}) },

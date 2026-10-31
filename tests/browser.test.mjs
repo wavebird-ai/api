@@ -7,6 +7,11 @@ const browserAsset = process.env.WAVEBIRD_JS_BROWSER_ASSET
   : new URL("../dist/browser.js", import.meta.url).href;
 const { createPublisherAds } = await import(browserAsset);
 
+test("browser refuses noncanonical workload before mounting", () => {
+  assert.throws(() => createPublisherAds({ target: { append() {} }, userId: "u", conversationId: "c",
+    jobType: "image_generation" }), /publisher_job_invalid/);
+});
+
 test("opt-in turn binding uses the host session and rejects cross-context reuse", async () => {
   const previousWindow = globalThis.window;
   const previousDocument = globalThis.document;
@@ -24,9 +29,9 @@ test("opt-in turn binding uses the host session and rejects cross-context reuse"
   };
   try {
     assert.throws(() => createPublisherAds({ target: { append() {} }, userId: "u", conversationId: "c",
-      turnBinding: true }), /publisher_trusted_session_required/);
+      jobType: "chat", turnBinding: true }), /publisher_trusted_session_required/);
     const ads = createPublisherAds({ target: { append() {} }, userId: "u", conversationId: "c",
-      sessionId: "trusted_session", turnBinding: true });
+      jobType: "chat", sessionId: "trusted_session", turnBinding: true });
     await ads.ready;
     assert.equal(received[0].sessionId, "trusted_session");
     assert.equal(received[0].turnBinding, true);
@@ -96,7 +101,7 @@ test("After Clip forwards only publisher placement wiring and owns renderer life
   };
   try {
     const ads = createPublisherAds({ target: { append() {} }, clientId: "wbproj_clip",
-      surfaceId: "image_generator", jobType: "image_generation", userId: "user_test",
+      surfaceId: "image_generator", jobType: "image", userId: "user_test",
       conversationId: "image_test", timing: "after", consentMode: "wavebird_consent",
       placementEndpoint: "/api/wavebird/placement", consentEndpoint: "/api/wavebird/consent",
       getFormat: () => "clip" });

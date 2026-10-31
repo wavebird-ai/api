@@ -30,7 +30,8 @@ function normalizeOptions(options) {
         ["claimPlacement", "releaseRejectedPlacement", "bind", "claimGeneration", "phase"].some(name => typeof options.turnJournal?.[name] !== "function"))))
     throw new Error("publisher_turn_journal_invalid");
   if (typeof options.clientId !== "string" || !options.clientId.startsWith("wbproj_")) throw new Error("publisher_project_invalid");
-  if (!String(options.secretKey || "").trim()) throw new Error("publisher_server_key_required");
+  if (typeof options.secretKey !== "string") throw new Error("publisher_server_key_invalid");
+  if (!options.secretKey.trim()) throw new Error("publisher_server_key_required");
   if (!/^sk_(?:test|live)_/.test(options.secretKey)) throw new Error("publisher_server_key_invalid");
   if (typeof options.surfaceId !== "string" || typeof options.placementKey !== "string" || !ID.test(options.surfaceId) || !PLACEMENT_KEY.test(options.placementKey)) throw new Error("publisher_placement_invalid");
   if (!["before", "during", "after"].includes(options.timing)) throw new Error("publisher_timing_invalid");
@@ -49,7 +50,14 @@ function normalizeOptions(options) {
   if (hasFloor !== hasCurrency || (hasFloor && (!Number.isFinite(options.bidfloor) || options.bidfloor < 0 || typeof options.bidfloorCurrency !== "string" || !/^[A-Za-z]{3}$/.test(options.bidfloorCurrency))))
     throw new Error("publisher_bidfloor_override_invalid");
   if (options.responsiveSizeSelection !== undefined && typeof options.responsiveSizeSelection !== "boolean") throw new Error("publisher_responsive_selection_invalid");
-  if (!options.publisher || typeof options.publisher !== "object" || Object.keys(options.publisher).some(key => !["app_name", "app_domain", "categories"].includes(key)) || typeof options.publisher.app_name !== "string" || typeof options.publisher.app_domain !== "string" || !Array.isArray(options.publisher.categories)) throw new Error("publisher_identity_invalid");
+  if (!options.publisher || typeof options.publisher !== "object" || Object.keys(options.publisher).some(key => !["app_name", "app_domain", "categories"].includes(key)) ||
+    typeof options.publisher.app_name !== "string" || !options.publisher.app_name.trim() ||
+    typeof options.publisher.app_domain !== "string" || !options.publisher.app_domain.trim() ||
+    !Array.isArray(options.publisher.categories) ||
+    options.publisher.categories.some(value => typeof value !== "string" || !value.trim())) throw new Error("publisher_identity_invalid");
+  if (options.blockedCategories !== undefined && (!Array.isArray(options.blockedCategories) ||
+    options.blockedCategories.some(value => typeof value !== "string" || !value.trim())))
+    throw new Error("publisher_blocked_categories_invalid");
   if (!["chat", "code", "image", "voice", "agent"].includes(options.jobType) || typeof options.locale !== "string" || !options.locale) throw new Error("publisher_job_invalid");
   const base = String(options.apiBaseUrl || "https://api.wavebird.ai").trim().replace(/\/+$/, "").replace(/\/v1$/, "") + "/v1";
   if (!/^https:\/\//.test(base)) throw new Error("publisher_api_https_required");

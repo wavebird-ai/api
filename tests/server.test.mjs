@@ -61,6 +61,20 @@ test("project and placement identifiers require strings before pattern validatio
   assert.throws(() => createPublisherServer({ ...saved, placementKey: { toString: () => "default" } }), /publisher_placement_invalid/);
 });
 
+test("required server identity and category inputs reject wrong types and empty values", () => {
+  assert.throws(() => createPublisherServer({ ...saved, secretKey: { toString: () => "sk_test_spoof" } }), /publisher_server_key_invalid/);
+  for (const publisher of [
+    { ...saved.publisher, app_name: "" },
+    { ...saved.publisher, app_name: "  " },
+    { ...saved.publisher, app_domain: "" },
+    { ...saved.publisher, app_domain: "  " },
+    { ...saved.publisher, categories: [123] },
+  ]) assert.throws(() => createPublisherServer({ ...saved, publisher }), /publisher_identity_invalid/);
+  for (const blockedCategories of ["bad", [123], [""]]) {
+    assert.throws(() => createPublisherServer({ ...saved, blockedCategories }), /publisher_blocked_categories_invalid/);
+  }
+});
+
 test("explicit GDPR policy flag must be a boolean", () => {
   for (const gdprApplies of [undefined, false, true])
     assert.doesNotThrow(() => createPublisherServer({ ...saved, gdprApplies }));

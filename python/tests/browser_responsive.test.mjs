@@ -30,7 +30,7 @@ test("Python browser sends one measured size and a saved-format preference witho
   Object.defineProperty(globalThis, "navigator", { configurable: true, value: { globalPrivacyControl: false } });
   globalThis.fetch = async (route, init = {}) => {
     if (route.endsWith("/consent") && init.method !== "POST")
-      return Response.json({ preference: { state: "granted", expires_at: Date.now() + 60_000 } });
+      return Response.json({ preference: { state: "granted", revision: 1, expires_at: Date.now() + 60_000 } });
     if (route.endsWith("/consent")) {
       const request = JSON.parse(init.body);
       return Response.json({ authoritative_consent: { lifecycle_state: "granted", revision: request.revision,
@@ -138,7 +138,7 @@ test("visible creative cleans up after its host shrinks without restarting the m
   } });
   globalThis.fetch = async (route, init = {}) => {
     if (route.endsWith("/consent") && init.method !== "POST")
-      return Response.json({ preference: { state: "granted", expires_at: Date.now() + 60_000 } });
+      return Response.json({ preference: { state: "granted", revision: 1, expires_at: Date.now() + 60_000 } });
     if (route.endsWith("/consent")) {
       const request = JSON.parse(init.body);
       return Response.json({ authoritative_consent: { lifecycle_state: "granted", revision: request.revision,
@@ -147,7 +147,7 @@ test("visible creative cleans up after its host shrinks without restarting the m
     if (route.endsWith("/placement")) {
       placementCalls++;
       return Response.json({ decision: { fill: true }, placement: { width: 320, height: 50 },
-        authoritative_consent: { lifecycle_state: "granted", revision: 1,
+        authoritative_consent: { lifecycle_state: "granted", revision: 2,
           expires_at_ms: Date.now() + 60_000 } });
     }
     if (route.endsWith("/generate")) { modelCalls++; return new Response("model result"); }
@@ -221,7 +221,7 @@ test(`${timing} Clip ${expirySoon ? "expires without a media event" : "clears on
   Object.defineProperty(globalThis, "navigator", { configurable: true, value: { globalPrivacyControl: false } });
   globalThis.fetch = async (route, init = {}) => {
     if (route.endsWith("/consent") && init.method !== "POST")
-      return Response.json({ preference: { state: "granted", expires_at: Date.now() + 60_000 } });
+      return Response.json({ preference: { state: "granted", revision: 1, expires_at: Date.now() + 60_000 } });
     if (route.endsWith("/consent")) {
       const body = JSON.parse(init.body);
       return Response.json({ authoritative_consent: { lifecycle_state: "granted", revision: body.revision,
@@ -230,7 +230,7 @@ test(`${timing} Clip ${expirySoon ? "expires without a media event" : "clears on
     if (route.endsWith("/placement")) {
       placementCalls++;
       return Response.json({ decision: { fill: true, format: "clip" }, placement: { width: 320, height: 180 },
-        authoritative_consent: { lifecycle_state: "granted", revision: 1,
+        authoritative_consent: { lifecycle_state: "granted", revision: 2,
           expires_at_ms: Date.now() + (expirySoon ? 250 : 60_000) } });
     }
     if (route.endsWith("/generate")) { modelCalls++; return new Response("model result"); }

@@ -51,7 +51,7 @@ async function fixture({ timing, jobType = "chat", format = "banner", latePlacem
   globalThis.fetch = async (route, init = {}) => {
     routes.push(route);
     if (route.endsWith("/consent") && init.method !== "POST")
-      return Response.json({ preference: { state: "granted", expires_at: Date.now() + 60_000 } });
+      return Response.json({ preference: { state: "granted", revision: 1, expires_at: Date.now() + 60_000 } });
     if (route.endsWith("/consent")) {
       const request = JSON.parse(init.body);
       consentReady = true;
@@ -61,7 +61,7 @@ async function fixture({ timing, jobType = "chat", format = "banner", latePlacem
     if (route.endsWith("/placement")) {
       if (latePlacement) await placement.promise;
       return Response.json({ decision: { fill: true, format }, placement: { width: 320, height: 180 },
-        authoritative_consent: { lifecycle_state: "granted", revision: 1,
+        authoritative_consent: { lifecycle_state: "granted", revision: 2,
           expires_at_ms: Date.now() + 60_000 } });
     }
     if (route.endsWith("/generate")) return new Response("model result");

@@ -49,7 +49,7 @@ test("Python renderer failure and publisher dispose preserve turn ownership", as
     value: { globalPrivacyControl: false } });
   globalThis.fetch = async (route, init = {}) => {
     if (route.endsWith("/consent") && init.method !== "POST")
-      return Response.json({ preference: { state: "granted", expires_at: Date.now() + 60_000 } });
+      return Response.json({ preference: { state: "granted", revision: 1, expires_at: Date.now() + 60_000 } });
     if (route.endsWith("/consent")) {
       const request = JSON.parse(init.body);
       consentReady = true;
@@ -61,7 +61,7 @@ test("Python renderer failure and publisher dispose preserve turn ownership", as
       placementCalls++;
       return Response.json({ decision: { fill: true, format: "clip" },
         placement: { width: 320, height: 180 },
-        authoritative_consent: { lifecycle_state: "granted", revision: 1,
+        authoritative_consent: { lifecycle_state: "granted", revision: 2,
           expires_at_ms: Date.now() + 60_000 } });
     }
     throw new Error("unexpected local route");

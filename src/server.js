@@ -59,8 +59,14 @@ function normalizeOptions(options) {
     options.blockedCategories.some(value => typeof value !== "string" || !value.trim())))
     throw new Error("publisher_blocked_categories_invalid");
   if (!["chat", "code", "image", "voice", "agent"].includes(options.jobType) || typeof options.locale !== "string" || !options.locale) throw new Error("publisher_job_invalid");
-  const base = String(options.apiBaseUrl || "https://api.wavebird.ai").trim().replace(/\/+$/, "").replace(/\/v1$/, "") + "/v1";
-  if (!/^https:\/\//.test(base)) throw new Error("publisher_api_https_required");
+  const apiBaseUrl = options.apiBaseUrl === undefined ? "https://api.wavebird.ai" : options.apiBaseUrl;
+  if (typeof apiBaseUrl !== "string" || !apiBaseUrl.trim() || /[\\?#]/.test(apiBaseUrl)) throw new Error("publisher_api_https_required");
+  const endpoint = apiBaseUrl.trim();
+  let parsedEndpoint;
+  try { parsedEndpoint = new URL(endpoint); } catch { throw new Error("publisher_api_https_required"); }
+  if (parsedEndpoint.protocol !== "https:" || !parsedEndpoint.hostname || parsedEndpoint.username || parsedEndpoint.password ||
+      parsedEndpoint.search || parsedEndpoint.hash) throw new Error("publisher_api_https_required");
+  const base = endpoint.replace(/\/+$/, "").replace(/\/v1$/, "") + "/v1";
   {
     if (!Array.isArray(options.publicOrigins) || options.publicOrigins.length < 1 || options.publicOrigins.length > 8) throw new Error("publisher_public_origins_invalid");
     for (const origin of options.publicOrigins) {

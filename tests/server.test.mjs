@@ -32,6 +32,16 @@ test("unknown server configuration fields fail closed", () => {
   assert.throws(() => createPublisherServer({ ...saved, allowedSizes: [{ width: 728, height: 90, unknownOption: true }] }), /publisher_sizes_invalid/);
 });
 
+test("API base URL accepts explicit HTTPS environments but rejects disguised destinations", () => {
+  for (const apiBaseUrl of [undefined, "https://api.wavebird.ai", "https://api.wavebird.ai/v1", "https://qa-api.example:8443/base/"])
+    assert.doesNotThrow(() => createPublisherServer({ ...saved, apiBaseUrl }));
+  for (const apiBaseUrl of [null, false, 0, "", "http://api.wavebird.ai", "https://api.wavebird.ai@other.example",
+    "https://api.wavebird.ai?tenant=other", "https://api.wavebird.ai#other", "https://api.wavebird.ai\\@other.example",
+    "https://api.wavebird.ai:bad"]) {
+    assert.throws(() => createPublisherServer({ ...saved, apiBaseUrl }), /publisher_api_https_required/);
+  }
+});
+
 test("preference secret is validated at setup using the same UTF-8 byte rule as Python", async () => {
   for (const preferenceSecret of [undefined, null, "short", "🔐".repeat(7)]) {
     assert.throws(() => createPublisherServer({ ...saved, preferenceSecret }), /preference_secret_required/);

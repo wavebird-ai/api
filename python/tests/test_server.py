@@ -24,6 +24,20 @@ def request(origin, body=None, headers=None, method="POST"):
 
 
 class ServerTests(unittest.TestCase):
+    def test_required_server_identity_rejects_wrong_types_and_empty_values(self):
+        for override in (
+            {"server_test_key": 42},
+            {"server_test_key": "", "server_key": 42},
+            {"preference_secret": 42},
+            {"publisher_name": ""},
+            {"publisher_name": "  "},
+            {"publisher_domain": ""},
+            {"publisher_domain": "  "},
+        ):
+            with self.subTest(override=tuple(override)):
+                with self.assertRaisesRegex(ValueError, "publisher_(?:server_key|security_config|identity)_invalid"):
+                    replace(config(), **override)
+
     def test_locale_requires_nonempty_string(self):
         for value in ("", None, 0, False):
             with self.subTest(value=value), self.assertRaisesRegex(ValueError, "publisher_job_invalid"):

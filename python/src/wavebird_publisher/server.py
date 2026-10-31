@@ -76,12 +76,16 @@ class PublisherConfig:
     def __post_init__(self) -> None:
         if not isinstance(self.client_id, str) or not self.client_id.startswith("wbproj_"):
             raise ValueError("publisher_project_invalid")
+        if not isinstance(self.server_key, str) or not isinstance(self.server_test_key, str):
+            raise ValueError("publisher_server_key_invalid")
         if self.server_key and self.server_test_key and self.server_key != self.server_test_key:
             raise ValueError("publisher_server_key_conflict")
         if not self.resolved_server_key.startswith(("sk_test_", "sk_live_")):
             raise ValueError("publisher_server_key_invalid")
-        if len(self.preference_secret.encode()) < 32 or not callable(self.authorize):
+        if not isinstance(self.preference_secret, str) or len(self.preference_secret.encode()) < 32 or not callable(self.authorize):
             raise ValueError("publisher_security_config_invalid")
+        if not isinstance(self.publisher_name, str) or not self.publisher_name.strip() or not isinstance(self.publisher_domain, str) or not self.publisher_domain.strip():
+            raise ValueError("publisher_identity_invalid")
         if not isinstance(self.surface_id, str) or not isinstance(self.placement_key, str) or not _ID.fullmatch(self.surface_id) or not _PLACEMENT_KEY.fullmatch(self.placement_key):
             raise ValueError("publisher_placement_invalid")
         if self.job_type not in ("chat", "code", "image", "voice", "agent") or not isinstance(self.locale, str) or not self.locale:

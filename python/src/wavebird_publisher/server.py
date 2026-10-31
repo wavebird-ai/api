@@ -96,9 +96,12 @@ class PublisherConfig:
             raise ValueError("publisher_gdpr_invalid")
         if self.position_hint not in ("above", "below", "sidebar", "between"):
             raise ValueError("publisher_position_invalid")
-        if not self.allowed_formats or any(value not in ("banner", "native", "clip") for value in self.allowed_formats):
+        if not isinstance(self.allowed_formats, (tuple, list)) or not self.allowed_formats or any(value not in ("banner", "native", "clip") for value in self.allowed_formats):
             raise ValueError("publisher_formats_invalid")
-        if not self.allowed_sizes or any(not (type(w) is int and type(h) is int and w > 0 and h > 0) for w, h in self.allowed_sizes):
+        if (not isinstance(self.allowed_sizes, (tuple, list)) or not self.allowed_sizes or
+            any(not isinstance(size, (tuple, list)) or len(size) != 2 or
+                type(size[0]) is not int or type(size[1]) is not int or
+                size[0] < 1 or size[1] < 1 for size in self.allowed_sizes)):
             raise ValueError("publisher_sizes_invalid")
         max_width = max(w for w, _ in self.allowed_sizes) if self.max_width is None else self.max_width
         max_height = max(h for _, h in self.allowed_sizes) if self.max_height is None else self.max_height
@@ -118,7 +121,9 @@ class PublisherConfig:
             if (width, height) not in self.allowed_sizes or (width, height) in seen_sizes or not isinstance(formats, tuple) or not formats or any(not isinstance(fmt, str) for fmt in formats) or len(set(formats)) != len(formats) or any(fmt not in self.allowed_formats for fmt in formats):
                 raise ValueError("publisher_size_formats_invalid")
             seen_sizes.add((width, height))
-        if not self.public_origins or len(self.public_origins) > 8 or len(set(self.public_origins)) != len(self.public_origins):
+        if (not isinstance(self.public_origins, (tuple, list)) or not 1 <= len(self.public_origins) <= 8 or
+            any(not isinstance(origin, str) for origin in self.public_origins) or
+            len(set(self.public_origins)) != len(self.public_origins)):
             raise ValueError("publisher_origins_invalid")
         for origin in self.public_origins:
             parsed = urlsplit(origin)

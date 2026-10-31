@@ -382,6 +382,25 @@ class ServerTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "publisher_origins_invalid"):
             replace(config(), public_origins=origins)
 
+    def test_nested_collection_shapes_fail_with_field_errors(self):
+        valid = config()
+        self.assertEqual(replace(valid, public_origins=["https://publisher-one.example"]).public_origins,
+                         ["https://publisher-one.example"])
+        self.assertEqual(replace(valid, allowed_formats=["banner"]).allowed_formats, ["banner"])
+        self.assertEqual(replace(valid, allowed_sizes=[[320, 50]]).allowed_sizes, [[320, 50]])
+        for value in (1, {"https://publisher-one.example": True}, (["nested"],)):
+            with self.subTest(field="public_origins", value=type(value).__name__):
+                with self.assertRaisesRegex(ValueError, "publisher_origins_invalid"):
+                    replace(valid, public_origins=value)
+        for value in (1, {"banner": True}):
+            with self.subTest(field="allowed_formats", value=type(value).__name__):
+                with self.assertRaisesRegex(ValueError, "publisher_formats_invalid"):
+                    replace(valid, allowed_formats=value)
+        for value in (1, {(320, 50): True}, (None,), ((),), ((320,),)):
+            with self.subTest(field="allowed_sizes", value=type(value).__name__):
+                with self.assertRaisesRegex(ValueError, "publisher_sizes_invalid"):
+                    replace(valid, allowed_sizes=value)
+
     def test_job_type_is_canonical_before_any_upstream_request(self):
         for job_type in ("chat", "code", "image", "voice", "agent"):
             self.assertEqual(replace(config(), job_type=job_type).job_type, job_type)

@@ -129,8 +129,14 @@ class PublisherConfig:
             loopback = parsed.hostname in ("localhost", "127.0.0.1")
             if parsed.geturl() != origin or not parsed.netloc or parsed.username or parsed.password or parsed.path or parsed.query or parsed.fragment or (parsed.scheme != "https" and not (loopback and parsed.scheme == "http" and self.resolved_server_key.startswith("sk_test_"))):
                 raise ValueError("publisher_origins_invalid")
-        base = urlsplit(self.api_base_url)
-        if base.scheme != "https" or not base.netloc or base.query or base.fragment:
+        if not isinstance(self.api_base_url, str) or not self.api_base_url.strip() or any(char in self.api_base_url for char in "\\?#"):
+            raise ValueError("publisher_api_https_required")
+        try:
+            base = urlsplit(self.api_base_url.strip())
+            port = base.port
+        except ValueError as error:
+            raise ValueError("publisher_api_https_required") from error
+        if base.scheme != "https" or not base.hostname or base.username is not None or base.password is not None or base.query or base.fragment or (port is not None and port < 1):
             raise ValueError("publisher_api_https_required")
 
 

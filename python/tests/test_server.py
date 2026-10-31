@@ -29,6 +29,16 @@ def request(origin, body=None, headers=None, method="POST"):
 
 
 class ServerTests(unittest.TestCase):
+    def test_api_base_url_accepts_https_environments_and_rejects_disguised_destinations(self):
+        for value in ("https://api.wavebird.ai", "https://api.wavebird.ai/v1", "https://qa-api.example:8443/base/"):
+            with self.subTest(positive=value):
+                replace(config(), api_base_url=value)
+        for value in (None, False, 0, "", "http://api.wavebird.ai", "https://api.wavebird.ai@other.example",
+                      "https://api.wavebird.ai?tenant=other", "https://api.wavebird.ai#other",
+                      "https://api.wavebird.ai\\@other.example", "https://api.wavebird.ai:bad"):
+            with self.subTest(negative=value), self.assertRaisesRegex(ValueError, "publisher_api_https_required"):
+                replace(config(), api_base_url=value)
+
     def test_default_transport_keeps_only_safe_response_headers_on_success_and_error(self):
         headers = Message()
         headers["Content-Type"] = "application/json"

@@ -34,6 +34,8 @@ export function createPublisherAds(options) {
   const timing = options.timing === undefined ? "during" : options.timing;
   const consentMode = options.consentMode === undefined ? "wavebird_consent" : options.consentMode;
   if (!["before", "during", "after"].includes(timing) || !["wavebird_consent", "own_cmp"].includes(consentMode)) throw new Error("Invalid publisher configuration");
+  const rendererUrl = options.rendererUrl === undefined ? "https://api.wavebird.ai/v1/render.js" : options.rendererUrl;
+  if (rendererUrl !== "https://api.wavebird.ai/v1/render.js") throw new Error("publisher_renderer_url_invalid");
   let binding = { userId: options.userId, conversationId: options.conversationId,
     sessionId: turnBinding ? options.sessionId : crypto.randomUUID() };
   let sponsor = null, disposed = false, context = 0, active = null;
@@ -92,7 +94,7 @@ export function createPublisherAds(options) {
     window.removeEventListener("pagehide", dispose);
   }
   window.addEventListener("pagehide", dispose);
-  const ready = loadRenderer(options.rendererUrl || "https://api.wavebird.ai/v1/render.js").then(() => {
+  const ready = loadRenderer(rendererUrl).then(() => {
     if (disposed) return;
     sponsor = window.wavebird.createChatSponsor({ target: slot, ...binding,
       clientId: options.clientId, surfaceId: options.surfaceId, timing, consentMode,

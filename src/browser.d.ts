@@ -22,6 +22,7 @@ export function createPublisherAds(options: {
   turnBinding?: boolean;
   timing?: "before" | "during" | "after";
   consentMode?: "wavebird_consent" | "own_cmp";
+  /** Optional official renderer URL. Only https://api.wavebird.ai/v1/render.js is supported. */
   rendererUrl?: string;
   privacySettingsTarget?: string;
   getFormat?: () => "banner" | "native" | "clip" | "auto";

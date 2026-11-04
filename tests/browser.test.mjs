@@ -37,6 +37,20 @@ test("browser rejects explicit invalid lifecycle and consent modes before mounti
   }
 });
 
+test("browser rejects unsupported renderer script URLs before mounting", () => {
+  const valid = { target: { append() { assert.fail("invalid renderer URL mounted"); } },
+    clientId: "wbproj_test", surfaceId: "chat_assistant",
+    jobType: "chat", userId: "user_test", conversationId: "conversation_test" };
+  for (const rendererUrl of [null, false, 0, "", "http://api.wavebird.ai/v1/render.js",
+    "https://user:pass@api.wavebird.ai/v1/render.js",
+    "https://api.wavebird.ai/v1/render.js?cache=1",
+    "https://api.wavebird.ai/v1/render.js#fragment",
+    "https://foreign.example/v1/render.js"]) {
+    assert.throws(() => createPublisherAds({ ...valid, rendererUrl }),
+      /publisher_renderer_url_invalid/, String(rendererUrl));
+  }
+});
+
 test("opt-in turn binding uses the host session and rejects cross-context reuse", async () => {
   const previousWindow = globalThis.window;
   const previousDocument = globalThis.document;

@@ -31,7 +31,8 @@ export function createPublisherAds(options) {
   const turnBinding = options.turnBinding === true;
   const validId = value => typeof value === "string" && /^[A-Za-z0-9_-]{1,128}$/.test(value);
   if (turnBinding && !validId(options.sessionId)) throw new Error("publisher_trusted_session_required");
-  const timing = options.timing || "during", consentMode = options.consentMode || "wavebird_consent";
+  const timing = options.timing === undefined ? "during" : options.timing;
+  const consentMode = options.consentMode === undefined ? "wavebird_consent" : options.consentMode;
   if (!["before", "during", "after"].includes(timing) || !["wavebird_consent", "own_cmp"].includes(consentMode)) throw new Error("Invalid publisher configuration");
   let binding = { userId: options.userId, conversationId: options.conversationId,
     sessionId: turnBinding ? options.sessionId : crypto.randomUUID() };

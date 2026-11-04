@@ -25,6 +25,18 @@ test("browser rejects missing and malformed required identity before mounting", 
   assert.throws(() => createPublisherAds({ ...valid, surfaceId: "invalid domain" }), /publisher_placement_invalid/);
 });
 
+test("browser rejects explicit invalid lifecycle and consent modes before mounting", () => {
+  const valid = { target: { append() { assert.fail("invalid mode mounted"); } },
+    clientId: "wbproj_test", surfaceId: "chat_assistant",
+    jobType: "chat", userId: "user_test", conversationId: "conversation_test" };
+  for (const field of ["timing", "consentMode"]) {
+    for (const value of [null, false, 0, ""]) {
+      assert.throws(() => createPublisherAds({ ...valid, [field]: value }),
+        /Invalid publisher configuration/, `${field}: ${String(value)}`);
+    }
+  }
+});
+
 test("opt-in turn binding uses the host session and rejects cross-context reuse", async () => {
   const previousWindow = globalThis.window;
   const previousDocument = globalThis.document;

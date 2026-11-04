@@ -32,6 +32,19 @@ test("unknown server configuration fields fail closed", () => {
   assert.throws(() => createPublisherServer({ ...saved, allowedSizes: [{ width: 728, height: 90, unknownOption: true }] }), /publisher_sizes_invalid/);
 });
 
+test("allowed size and envelope bounds match the current placement contract", () => {
+  const accepted = Array.from({ length: 8 }, (_, index) => ({ width: 300 + index, height: 250 }));
+  assert.doesNotThrow(() => createPublisherServer({ ...saved, allowedSizes: accepted, maxWidth: 8192, maxHeight: 8192 }));
+  assert.doesNotThrow(() => createPublisherServer({ ...saved, allowedSizes: [{ width: 4096, height: 4096 }], maxWidth: 8192, maxHeight: 8192 }));
+  for (const allowedSizes of [
+    [{ width: 4097, height: 250 }], [{ width: 300, height: 4097 }],
+    Array.from({ length: 9 }, (_, index) => ({ width: 300 + index, height: 250 })),
+    [{ width: 300, height: 250 }, { width: 300, height: 250 }],
+  ]) assert.throws(() => createPublisherServer({ ...saved, allowedSizes }), /publisher_sizes_invalid/);
+  for (const envelope of [{ maxWidth: 8193 }, { maxHeight: 8193 }])
+    assert.throws(() => createPublisherServer({ ...saved, ...envelope }), /publisher_envelope_invalid/);
+});
+
 test("API base URL accepts explicit HTTPS environments but rejects disguised destinations", () => {
   for (const apiBaseUrl of [undefined, "https://api.wavebird.ai", "https://api.wavebird.ai/v1", "https://qa-api.example:8443/base/"])
     assert.doesNotThrow(() => createPublisherServer({ ...saved, apiBaseUrl }));

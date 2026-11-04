@@ -1,3 +1,4 @@
+import { Buffer } from "node:buffer";
 import { generationTransport } from "./generation.js";
 export { createPublisherTurnJournal, derivePublisherTurnKeySecret } from "./turn-journal.js";
 export { createPostgresTurnStorage } from "./postgres-turn-storage.js";
@@ -24,7 +25,7 @@ function response(error, status, headers = {}) {
 }
 
 function normalizeOptions(options) {
-  if (typeof window !== "undefined") throw new Error("publisher_server_only");
+  if (typeof document !== "undefined") throw new Error("publisher_server_only");
   if (options && Object.keys(options).some(key => !SERVER_OPTION_KEYS.has(key))) throw new Error("publisher_option_unknown");
   if (!options || typeof options.authorize !== "function") throw new Error("publisher_authorize_required");
   if (typeof options.preferenceSecret !== "string" || new TextEncoder().encode(options.preferenceSecret).byteLength < 32) throw new Error("preference_secret_required");

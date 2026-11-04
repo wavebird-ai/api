@@ -1,3 +1,4 @@
+import { Buffer } from "node:buffer";
 import { createHash, createHmac, randomUUID } from "node:crypto";
 
 const ID = /^[A-Za-z0-9_-]{1,128}$/;

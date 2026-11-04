@@ -9,7 +9,7 @@ You need a saved Wavebird Test project and placement in Dashboard, a Server Test
 1. Install the package and generate the route files for your app directory:
 
    ```sh
-   npm install @wavebirdai/api@0.1.0-beta.9
+   npm install @wavebirdai/api@0.1.0-beta.10
    ./node_modules/.bin/wavebird-next init --lang ts --root . --app-dir src/app
    ```
 

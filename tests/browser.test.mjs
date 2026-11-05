@@ -51,6 +51,37 @@ test("browser rejects unsupported renderer script URLs before mounting", () => {
   }
 });
 
+test("pre-aborted generation does not invoke the publisher model request", async () => {
+  const previousWindow = globalThis.window, previousDocument = globalThis.document;
+  let requested = 0;
+  globalThis.document = {
+    createElement: () => ({ style: {}, setAttribute() {}, replaceChildren() {}, remove() {} }),
+    querySelector: () => null,
+  };
+  globalThis.window = {
+    wavebird: { createChatSponsor: () => ({ prepare: async () => {}, dispose() {} }) },
+    addEventListener() {}, removeEventListener() {},
+  };
+  let ads;
+  try {
+    ads = createPublisherAds({ target: { append() {} }, clientId: "wbproj_synthetic",
+      surfaceId: "chat_assistant", jobType: "chat", userId: "user_synthetic",
+      conversationId: "conversation_synthetic", consentMode: "own_cmp" });
+    await ads.ready;
+    const controller = new AbortController();
+    controller.abort();
+    await assert.rejects(ads.connectGeneration({ signal: controller.signal,
+      request: () => { requested++; return new Response("should not run"); },
+      consume: response => response.text(),
+    }), /generation_aborted/);
+    assert.equal(requested, 0);
+  } finally {
+    ads?.dispose();
+    globalThis.window = previousWindow;
+    globalThis.document = previousDocument;
+  }
+});
+
 test("opt-in turn binding uses the host session and rejects cross-context reuse", async () => {
   const previousWindow = globalThis.window;
   const previousDocument = globalThis.document;

@@ -125,6 +125,7 @@ export function createPublisherAds(options) {
     if (signal?.aborted) abort();
     const headers = { "x-wavebird-session-id": job.sessionId, "x-wavebird-generation-id": job.id };
     try {
+      if (signal?.aborted) throw new Error("generation_aborted");
       const response = await request(headers);
       if (response.headers.get("x-wavebird-generation-transport") !== "1")
         return await consume(response, { onDelta() {} });

@@ -158,6 +158,84 @@ test("After Banner forwards the saved format to the hosted renderer", async () =
   }
 });
 
+test("During Image keeps transport completion separate from presentation and forwards workload", async () => {
+  const previousWindow = globalThis.window, previousDocument = globalThis.document;
+  const events = [];
+  let sponsorOptions, releasePresentation, bodyRead;
+  const presentation = new Promise(resolve => { releasePresentation = resolve; });
+  const consumedBody = new Promise(resolve => { bodyRead = resolve; });
+  globalThis.document = {
+    createElement: () => ({ style: {}, setAttribute() {}, replaceChildren() {}, remove() {} }),
+    querySelector: () => null,
+  };
+  globalThis.window = { addEventListener() {}, removeEventListener() {}, wavebird: {
+    createChatSponsor: options => {
+      sponsorOptions = options;
+      return { prepare: async () => {}, onStarted: () => events.push("started"),
+        onDone: () => events.push("transport_done"), onPresented: () => events.push("presented"),
+        onError: () => events.push("error"), dispose() {} };
+    },
+  } };
+  let ads;
+  try {
+    ads = createPublisherAds({ target: { append() {} }, clientId: "wbproj_image_lifecycle",
+      surfaceId: "image_generator", jobType: "image", userId: "user_test",
+      conversationId: "image_test", timing: "during", consentMode: "own_cmp" });
+    await ads.ready;
+    assert.equal(sponsorOptions.jobType, "image");
+    const pending = ads.connectGeneration({
+      request: headers => new Response([
+        { type: "started" }, { type: "response", status: 200, headers: [["content-type", "image/png"]] },
+        { type: "bytes", data: Buffer.from("synthetic image").toString("base64") }, { type: "done" },
+      ].map(item => JSON.stringify({ session_id: headers["x-wavebird-session-id"],
+        generation_id: headers["x-wavebird-generation-id"], ...item }) + "\n").join(""),
+      { headers: { "x-wavebird-generation-transport": "1" } }),
+      consume: async (response, lifecycle) => {
+        await response.arrayBuffer(); bodyRead(); await presentation;
+        lifecycle.onPresented(); lifecycle.onPresented(); return "image presented";
+      },
+    });
+    await consumedBody;
+    assert.deepEqual(events, ["started", "transport_done"]);
+    releasePresentation();
+    assert.equal(await pending, "image presented");
+    assert.deepEqual(events, ["started", "transport_done", "presented"]);
+  } finally {
+    ads?.dispose(); globalThis.window = previousWindow; globalThis.document = previousDocument;
+  }
+});
+
+test("a no-result During response terminates the slot without inventing presentation", async () => {
+  const previousWindow = globalThis.window, previousDocument = globalThis.document;
+  const events = [];
+  globalThis.document = { createElement: () => ({ style: {}, setAttribute() {}, replaceChildren() {}, remove() {} }),
+    querySelector: () => null };
+  globalThis.window = { addEventListener() {}, removeEventListener() {}, wavebird: {
+    createChatSponsor: () => ({ prepare: async () => {}, onStarted: () => events.push("started"),
+      onDone: () => events.push("done"), onPresented: () => events.push("presented"),
+      onError: () => events.push("terminal_no_result"), dispose() {} }),
+  } };
+  let ads;
+  try {
+    ads = createPublisherAds({ target: { append() {} }, clientId: "wbproj_image_noresult",
+      surfaceId: "image_generator", jobType: "image", userId: "user_test",
+      conversationId: "image_test", timing: "during", consentMode: "own_cmp" });
+    await ads.ready;
+    const result = await ads.connectGeneration({
+      request: headers => new Response([
+        { type: "started" }, { type: "response", status: 204, headers: [] }, { type: "done" },
+      ].map(item => JSON.stringify({ session_id: headers["x-wavebird-session-id"],
+        generation_id: headers["x-wavebird-generation-id"], ...item }) + "\n").join(""),
+      { headers: { "x-wavebird-generation-transport": "1" } }),
+      consume: async response => { assert.equal(response.status, 204); return "no image"; },
+    });
+    assert.equal(result, "no image");
+    assert.deepEqual(events, ["started", "terminal_no_result"]);
+  } finally {
+    ads?.dispose(); globalThis.window = previousWindow; globalThis.document = previousDocument;
+  }
+});
+
 test("After Clip forwards only publisher placement wiring and owns renderer lifecycle", async () => {
   const previousWindow = globalThis.window;
   const previousDocument = globalThis.document;

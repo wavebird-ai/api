@@ -75,6 +75,10 @@ export function createPublisherAds(options) {
       sponsor = null; slot.hidden = true; slot.replaceChildren();
     }
   };
+  const notifyPresented = id => {
+    // Additive bridge: an already deployed renderer may predate this event.
+    if (typeof sponsor?.onPresented === "function") notify("onPresented", id);
+  };
   const current = job => !disposed && !job.cancelled && job.context === context && active === job;
   const event = (job, type) => {
     if (!current(job)) return;
@@ -84,9 +88,15 @@ export function createPublisherAds(options) {
     } else if (type === "progress") {
       if (job.state === "started") { job.progressed = true; notify("onDelta", job.id); }
     } else if (type === "no_result") {
-      if (job.state === "started") job.state = "no_result";
-    } else if (["done", "error", "abort"].includes(type)) {
       if (job.state !== "started") return;
+      job.state = "no_result";
+      if (timing !== "after") notify("onError", job.id);
+    } else if (type === "presented") {
+      if (!["started", "done"].includes(job.state) || job.presented) return;
+      job.presented = true; notifyPresented(job.id);
+    } else if (["done", "error", "abort"].includes(type)) {
+      if (job.state !== "started" &&
+          !(job.state === "done" && !job.consumed && ["error", "abort"].includes(type))) return;
       job.state = type;
       notify(type === "done" ? "onDone" : type === "abort" ? "onAbort" : "onError", job.id);
     }
@@ -118,7 +128,7 @@ export function createPublisherAds(options) {
   const ready = loadRenderer(rendererUrl).then(() => {
     if (disposed) return;
     sponsor = window.wavebird.createChatSponsor({ target: slot, ...binding,
-      clientId: options.clientId, surfaceId: options.surfaceId, timing, consentMode,
+      clientId: options.clientId, surfaceId: options.surfaceId, jobType: options.jobType, timing, consentMode,
       cleanupAfterClip: true,
       ...(turnBinding ? { turnBinding: true } : {}),
       ...(options.getFormat === undefined ? {} : { getFormat: options.getFormat }),
@@ -136,7 +146,8 @@ export function createPublisherAds(options) {
   }).catch(() => {});
 
   async function connectGeneration({ request, consume, signal }) {
-    const job = { id: crypto.randomUUID(), sessionId: binding.sessionId, context, state: "pending", cancelled: false };
+    const job = { id: crypto.randomUUID(), sessionId: binding.sessionId, context, state: "pending", cancelled: false,
+      presented: false, consumed: false };
     if (active) event(active, "abort");
     active = job;
     let reader = null, ended = false, buffer = "";
@@ -195,7 +206,8 @@ export function createPublisherAds(options) {
               }
               if (["done", "error", "abort"].includes(record.type)) {
                 ended = true;
-                if (record.type !== "done" || timing !== "after") event(job, record.type);
+                if (record.type === "done" && [204, 205, 304].includes(metadata.status)) event(job, "no_result");
+                else if (record.type !== "done" || timing !== "after") event(job, record.type);
                 if (record.type === "done" || !metadata.status.toString().startsWith("2")) controller.close();
                 else controller.error(new Error("generation_" + record.type));
                 return;
@@ -210,14 +222,20 @@ export function createPublisherAds(options) {
         const record = await nextRecord();
         if (!["done", "error", "abort"].includes(record.type)) throw new Error("generation_transport_invalid");
         ended = true;
-        if (record.type !== "done" || timing !== "after") event(job, record.type);
+        if (record.type === "done") event(job, "no_result");
+        else event(job, record.type);
       }
       const noBody = [204, 205, 304].includes(metadata.status);
       const primary = new Response(noBody ? null : output, {
         status: metadata.status, statusText: metadata.status_text || "", headers: metadata.headers
       });
-      const result = await consume(primary, { onDelta: () => event(job, "progress") });
-      if (timing === "after" && ended) event(job, noBody ? "no_result" : "done");
+      const result = await consume(primary, { onDelta: () => {
+        event(job, "progress");
+        if (timing === "before" || (timing === "during" && options.jobType === "image")) event(job, "presented");
+      }, onPresented: () => event(job, "presented") });
+      job.consumed = true;
+      if (timing === "before" || (timing === "during" && options.jobType === "image")) event(job, "presented");
+      if (timing === "after" && ended && !noBody) event(job, "done");
       return result;
     } catch (error) {
       event(job, signal?.aborted ? "abort" : "error");

@@ -1,5 +1,10 @@
 /** Resolve after the publisher has presented the result; After timing starts then. */
-export type GenerationConsumer<T> = (response: Response, lifecycle: { onDelta(): void }) => T | Promise<T>;
+export type GenerationConsumer<T> = (response: Response, lifecycle: {
+  /** Streaming output progress. For Before and During Image, call after the first result is presented. */
+  onDelta(): void;
+  /** Explicitly mark the result as presented. Idempotent and bound to this generation. */
+  onPresented(): void;
+}) => T | Promise<T>;
 export type PublisherAds<Bound extends boolean = boolean> = {
   ready: Promise<void>;
   connectGeneration<T>(options: { request: (headers: Record<string, string>) => Response | Promise<Response>; consume: GenerationConsumer<T>; signal?: AbortSignal }): Promise<T>;

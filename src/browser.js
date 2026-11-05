@@ -126,7 +126,8 @@ export function createPublisherAds(options) {
     const headers = { "x-wavebird-session-id": job.sessionId, "x-wavebird-generation-id": job.id };
     try {
       const response = await request(headers);
-      if (response.headers.get("x-wavebird-generation-transport") !== "1") return await consume(response);
+      if (response.headers.get("x-wavebird-generation-transport") !== "1")
+        return await consume(response, { onDelta() {} });
       if (!response.body) throw new Error("generation_transport_missing");
       reader = response.body.getReader();
       async function nextRecord() {

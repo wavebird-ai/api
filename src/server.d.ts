@@ -30,15 +30,12 @@ export function createPublisherTurnJournal(options: {
 }): PublisherTurnJournal;
 /** Derive a stable, domain-separated journal key from the existing server-only preference secret. */
 export function derivePublisherTurnKeySecret(preferenceSecret: string): string;
-export type PublisherServerOptions = {
+type PublisherServerBaseOptions = {
   apiBaseUrl?: string;
   clientId: string;
   secretKey: string;
   preferenceSecret: string;
   authorize: (request: Request) => boolean | Promise<boolean>;
-  /** Opt-in successor: derive the exact browser session from the host's authenticated request. */
-  sessionIdForRequest?: (request: Request) => string | null | Promise<string | null>;
-  turnJournal?: PublisherTurnJournal;
   onDiagnostic?: (code: string) => void;
   publicOrigins: string[];
   surfaceId: string;
@@ -47,7 +44,7 @@ export type PublisherServerOptions = {
   locale: string;
   timing: "before" | "during" | "after";
   consentMode: "wavebird_consent" | "own_cmp";
-  gdprApplies: boolean;
+  gdprApplies?: boolean;
   publisher: { app_name: string; app_domain: string; categories: string[] };
   allowedFormats: Array<"banner" | "native" | "clip">;
   positionHint: "above" | "below" | "sidebar" | "between";
@@ -60,6 +57,12 @@ export type PublisherServerOptions = {
   bidfloorCurrency?: string;
   blockedCategories?: string[];
 };
+/** Trusted session resolution and the durable turn journal must be supplied together. */
+export type PublisherServerOptions = PublisherServerBaseOptions & (
+  { sessionIdForRequest?: never; turnJournal?: never } |
+  { sessionIdForRequest: (request: Request) => string | null | Promise<string | null>;
+    turnJournal: PublisherTurnJournal }
+);
 export type GenerationLifecycleEvent = {
   type: "started" | "done" | "error" | "abort";
   sessionId: string;

@@ -10,16 +10,13 @@ export type PublisherAds = {
   deny(): Promise<unknown>;
   withdraw(): Promise<unknown>;
 };
-export function createPublisherAds(options: {
+type PublisherAdsOptions = {
   target: HTMLElement;
   clientId: string;
   surfaceId: string;
   jobType: "chat" | "code" | "image" | "voice" | "agent";
   userId: string;
   conversationId: string;
-  /** Opt-in successor contract: a session ID supplied by the host's authenticated context. */
-  sessionId?: string;
-  turnBinding?: boolean;
   timing?: "before" | "during" | "after";
   consentMode?: "wavebird_consent" | "own_cmp";
   /** Optional official renderer URL. Only https://api.wavebird.ai/v1/render.js is supported. */
@@ -28,6 +25,11 @@ export function createPublisherAds(options: {
   getFormat?: () => "banner" | "native" | "clip" | "auto";
   placementEndpoint?: string;
   consentEndpoint?: string;
-}): PublisherAds;
+} & (
+  { turnBinding?: false; sessionId?: string } |
+  /** Opt-in successor contract: a session ID supplied by the host's authenticated context. */
+  { turnBinding: true; sessionId: string }
+);
+export function createPublisherAds(options: PublisherAdsOptions): PublisherAds;
 /** Pass the mount's ads instance to keep concurrent surfaces bound to their own generation. */
 export function connectPublisherGeneration<T>(url: string, init: RequestInit, consume: GenerationConsumer<T>, ads?: PublisherAds): Promise<T>;

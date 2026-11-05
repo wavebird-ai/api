@@ -28,6 +28,8 @@ export function createPublisherAds(options) {
     throw new Error("publisher_project_invalid");
   if (typeof options.surfaceId !== "string" || !/^[A-Za-z0-9_-]{1,128}$/.test(options.surfaceId))
     throw new Error("publisher_placement_invalid");
+  if (options.turnBinding !== undefined && typeof options.turnBinding !== "boolean")
+    throw new Error("publisher_turn_binding_invalid");
   const turnBinding = options.turnBinding === true;
   const validId = value => typeof value === "string" && /^[A-Za-z0-9_-]{1,128}$/.test(value);
   if (turnBinding && !validId(options.sessionId)) throw new Error("publisher_trusted_session_required");

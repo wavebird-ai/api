@@ -190,7 +190,7 @@ export function createPublisherAds(options) {
                 if (typeof record.data !== "string" || record.data.length > 21848 || !/^[A-Za-z0-9+/]*={0,2}$/.test(record.data)) throw new Error("generation_bytes_invalid");
                 const raw = atob(record.data), bytes = Uint8Array.from(raw, value => value.charCodeAt(0));
                 controller.enqueue(bytes);
-                if (timing !== "before" && options.jobType !== "image") event(job, "progress");
+                if (bytes.length && timing !== "before" && options.jobType !== "image") event(job, "progress");
                 return;
               }
               if (["done", "error", "abort"].includes(record.type)) {

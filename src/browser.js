@@ -48,6 +48,15 @@ export function createPublisherAds(options) {
     throw new Error("publisher_endpoint_invalid");
   const rendererUrl = options.rendererUrl === undefined ? "https://api.wavebird.ai/v1/render.js" : options.rendererUrl;
   if (rendererUrl !== "https://api.wavebird.ai/v1/render.js") throw new Error("publisher_renderer_url_invalid");
+  if (options.getFormat !== undefined && typeof options.getFormat !== "function")
+    throw new Error("publisher_format_hook_invalid");
+  let privacyTarget = null;
+  if (consentMode === "wavebird_consent" && options.privacySettingsTarget !== undefined) {
+    if (typeof options.privacySettingsTarget !== "string" || !options.privacySettingsTarget.trim())
+      throw new Error("publisher_privacy_target_invalid");
+    try { privacyTarget = document.querySelector(options.privacySettingsTarget); }
+    catch { throw new Error("publisher_privacy_target_invalid"); }
+  }
   let binding = { userId: options.userId, conversationId: options.conversationId,
     sessionId: turnBinding ? options.sessionId : crypto.randomUUID() };
   let sponsor = null, disposed = false, context = 0, active = null;
@@ -55,8 +64,6 @@ export function createPublisherAds(options) {
   slot.setAttribute("aria-label", "Sponsored placement");
   slot.style.cssText = "width:100%;height:100%;overflow:hidden;margin:0 auto";
   target.append(slot);
-  const privacyTarget = consentMode === "wavebird_consent" && options.privacySettingsTarget
-    ? document.querySelector(options.privacySettingsTarget) : null;
   const openPrivacySettings = () => { if (!disposed) sponsor?.openPrivacySettings(); };
   privacyTarget?.addEventListener("click", openPrivacySettings);
   const notify = (method, id) => {

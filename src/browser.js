@@ -21,7 +21,7 @@ function loadRenderer(url) {
 export function createPublisherAds(options) {
   const target = options.target;
   const requiredText = value => typeof value === "string" && value.trim().length > 0;
-  if (!target || !requiredText(options.userId) || !requiredText(options.conversationId))
+  if (!target || typeof target.append !== "function" || !requiredText(options.userId) || !requiredText(options.conversationId))
     throw new Error("Application container and session are required");
   if (!["chat", "code", "image", "voice", "agent"].includes(options.jobType)) throw new Error("publisher_job_invalid");
   if (typeof options.clientId !== "string" || !options.clientId.startsWith("wbproj_"))

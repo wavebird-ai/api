@@ -12,6 +12,14 @@ test("journal key is stable, domain separated, and requires a server preference 
   assert.throws(() => derivePublisherTurnKeySecret("short"), /publisher_preference_secret_invalid/);
 });
 
+test("journal diagnostic hook rejects invalid supplied values", () => {
+  const storage = new AtomicStore();
+  for (const onDiagnostic of [null, false, 0, "", "callback", {}])
+    assert.throws(() => createPublisherTurnJournal({ storage,
+      keySecret: "synthetic-stable-turn-key-secret-32-bytes", reportGeneration: async () => {}, onDiagnostic,
+    }), /publisher_diagnostic_invalid/);
+});
+
 test("a changed key cannot claim an existing turn as new across workers", async () => {
   const storage = new AtomicStore();
   const turn = { projectId: "wbproj_synthetic", surfaceId: "assistant", sessionId: "session", turnId: "turn" };

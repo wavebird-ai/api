@@ -28,6 +28,8 @@ function normalizeOptions(options) {
   if (typeof document !== "undefined") throw new Error("publisher_server_only");
   if (options && Object.keys(options).some(key => !SERVER_OPTION_KEYS.has(key))) throw new Error("publisher_option_unknown");
   if (!options || typeof options.authorize !== "function") throw new Error("publisher_authorize_required");
+  if (options.onDiagnostic !== undefined && typeof options.onDiagnostic !== "function")
+    throw new Error("publisher_diagnostic_invalid");
   if (typeof options.preferenceSecret !== "string" || new TextEncoder().encode(options.preferenceSecret).byteLength < 32) throw new Error("preference_secret_required");
   if ((options.turnJournal === undefined) !== (options.sessionIdForRequest === undefined) ||
       (options.turnJournal !== undefined && (typeof options.sessionIdForRequest !== "function" ||

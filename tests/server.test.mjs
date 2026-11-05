@@ -105,6 +105,36 @@ test("explicit GDPR policy flag must be a boolean", () => {
     assert.throws(() => createPublisherServer({ ...saved, gdprApplies }), /publisher_gdpr_invalid/);
 });
 
+test("server diagnostic hook rejects invalid supplied values and contains callback failure", async () => {
+  for (const onDiagnostic of [null, false, 0, "", "callback", {}])
+    assert.throws(() => createPublisherServer({ ...saved, onDiagnostic }), /publisher_diagnostic_invalid/);
+  const codes = [];
+  const server = createPublisherServer({ ...saved,
+    sessionIdForRequest: () => { throw new Error("synthetic_session_unavailable"); },
+    turnJournal: {
+      claimPlacement: async () => true, releaseRejectedPlacement: async () => {},
+      bind: async () => {}, claimGeneration: async () => true, phase: async () => {},
+    },
+    onDiagnostic: code => { codes.push(code); throw new Error("synthetic_diagnostic_failure"); },
+  });
+  const result = await server.sessionGET(routeRequest("/api/sponsor-session"));
+  assert.equal(result.status, 503);
+  assert.deepEqual(await result.json(), { error: "publisher_session_unavailable" });
+  assert.deepEqual(codes, ["publisher_session_unavailable"]);
+});
+
+test("server session and journal hooks reject incomplete and malformed pairs", () => {
+  const journal = Object.fromEntries(["claimPlacement", "releaseRejectedPlacement", "bind", "claimGeneration", "phase"]
+    .map(name => [name, async () => true]));
+  assert.doesNotThrow(() => createPublisherServer(saved));
+  assert.doesNotThrow(() => createPublisherServer({ ...saved, sessionIdForRequest: () => "session", turnJournal: journal }));
+  for (const [sessionIdForRequest, turnJournal] of [
+    [undefined, journal], [() => "session", undefined], [null, journal], [() => "session", null],
+    [false, journal], [0, journal], ["", journal], [() => "session", false],
+    [() => "session", 0], [() => "session", ""],
+  ]) assert.throws(() => createPublisherServer({ ...saved, sessionIdForRequest, turnJournal }), /publisher_turn_journal_invalid/);
+});
+
 const routeRequest = (path, body, headers = {}) => new Request(`https://publisher.example${path}`, {
   method: body === undefined ? "GET" : "POST",
   headers: { host: "publisher.example", authorization: "Session publisher", origin: "https://publisher.example", "sec-fetch-site": "same-origin", ...headers },
@@ -333,6 +363,31 @@ test("empty optional category arrays are omitted from the existing REST payload"
   });
   assert.equal(Object.hasOwn(payload.overrides.publisher, "categories"), false);
   assert.equal(Object.hasOwn(payload.overrides, "blocked_categories"), false);
+});
+
+test("opaque supported placement and consent response payloads relay without invented partner semantics", async () => {
+  const server = createPublisherServer(saved);
+  const placementPayload = {
+    slot_id: "slot_synthetic", status: "ready", fill: true,
+    decision: { fill: true, format: "banner", metadata: { opaque_partner_payload: { list: [0, false, null, "unknown"] } } },
+    placement: { width: 728, height: 90, render: { opaque_creative: { nested: ["keep", { value: 0 }] } } },
+    future_additive: { token: "opaque" },
+  };
+  await withFetch(async () => Response.json(placementPayload, { headers: { "x-request-id": "request_synthetic" } }), async () => {
+    const result = await server.placementPOST(routeRequest("/api/sponsor-slot", { session_id: "session_synthetic" }));
+    assert.equal(result.status, 200);
+    assert.equal(result.headers.get("x-request-id"), "request_synthetic");
+    assert.deepEqual(await result.json(), placementPayload);
+  });
+  const consentPayload = { authoritative_consent: { lifecycle_state: "granted", revision: 2 },
+    opaque_extensions: { preserved: [null, false, 0, "future"] } };
+  await withFetch(async () => Response.json(consentPayload), async () => {
+    const result = await server.consentPOST(routeRequest("/api/sponsor-consent", {
+      session_id: "session_synthetic", lifecycle_state: "granted", revision: 2, remember_for_30_days: false,
+    }));
+    assert.equal(result.status, 200);
+    assert.deepEqual(await result.json(), consentPayload);
+  });
 });
 
 test("No-Fill is relayed; missing auth, wrong origin, and GPC never reach Wavebird", async () => {

@@ -17,6 +17,8 @@ export function createPublisherTurnJournal({ storage, reportGeneration, keySecre
       typeof reportGeneration !== "function") throw new Error("publisher_turn_storage_invalid");
   if (typeof keySecret !== "string" || Buffer.byteLength(keySecret, "utf8") < 32)
     throw new Error("publisher_turn_key_secret_invalid");
+  if (onDiagnostic !== undefined && typeof onDiagnostic !== "function")
+    throw new Error("publisher_diagnostic_invalid");
   const tasks = new Set();
   let activeReports = 0;
   const reportWaiters = [];

@@ -208,8 +208,7 @@ export function createPublisherAds(options) {
     withdraw: () => sponsor ? sponsor.withdraw() : Promise.resolve({ status: "renderer_unavailable" }) };
 }
 
-export async function connectPublisherGeneration(url, init, consume) {
-  const ads = window.publisherAds;
+export async function connectPublisherGeneration(url, init, consume, ads = window.publisherAds) {
   if (!ads) return consume(await fetch(url, init), { onDelta() {} });
   return ads.connectGeneration({
     signal: init.signal ?? undefined,

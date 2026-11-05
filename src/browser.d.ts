@@ -29,4 +29,5 @@ export function createPublisherAds(options: {
   placementEndpoint?: string;
   consentEndpoint?: string;
 }): PublisherAds;
-export function connectPublisherGeneration<T>(url: string, init: RequestInit, consume: GenerationConsumer<T>): Promise<T>;
+/** Pass the mount's ads instance to keep concurrent surfaces bound to their own generation. */
+export function connectPublisherGeneration<T>(url: string, init: RequestInit, consume: GenerationConsumer<T>, ads?: PublisherAds): Promise<T>;

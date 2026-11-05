@@ -148,8 +148,12 @@ export function createPublisherAds(options) {
     try {
       if (signal?.aborted) throw new Error("generation_aborted");
       const response = await request(headers);
-      if (response.headers.get("x-wavebird-generation-transport") !== "1")
-        return await consume(response, { onDelta() {} });
+      if (!current(job)) throw new Error("generation_aborted");
+      if (response.headers.get("x-wavebird-generation-transport") !== "1") {
+        const result = await consume(response, { onDelta() {} });
+        if (!current(job)) throw new Error("generation_aborted");
+        return result;
+      }
       if (!response.body) throw new Error("generation_transport_missing");
       reader = response.body.getReader();
       async function nextRecord() {

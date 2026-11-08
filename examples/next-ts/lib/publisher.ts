@@ -1,16 +1,25 @@
 import "server-only";
-import { createPublisherServer } from "@wavebirdai/api/server";
-import { authorizePublisherRequest } from "./auth";
+import { createPublisherServer, createPublisherTurnJournal, derivePublisherTurnKeySecret } from "@wavebirdai/api/server";
+import { authorizePublisherRequest, sessionIdForRequest } from "./auth";
+import { publisherTurnStorage } from "./turn-store";
 
 let publisher: ReturnType<typeof createPublisherServer> | null = null;
 
 export function getPublisher(): ReturnType<typeof createPublisherServer> {
-  return publisher ??= createPublisherServer({
+  if (publisher) return publisher;
+  const turnJournal = createPublisherTurnJournal({
+    storage: publisherTurnStorage(),
+    keySecret: derivePublisherTurnKeySecret(process.env.WAVEBIRD_PREFERENCE_SECRET ?? ""),
+    reportGeneration: (jobId, event) => getPublisher().reportGeneration(jobId, event),
+  });
+  return publisher = createPublisherServer({
   apiBaseUrl: process.env.WAVEBIRD_API_BASE_URL,
   clientId: process.env.WAVEBIRD_CLIENT_ID ?? "",
   secretKey: process.env.WAVEBIRD_SECRET_KEY ?? "",
   preferenceSecret: process.env.WAVEBIRD_PREFERENCE_SECRET ?? "",
   authorize: authorizePublisherRequest,
+  sessionIdForRequest,
+  turnJournal,
   publicOrigins: (process.env.WAVEBIRD_PUBLIC_ORIGINS ?? "").split(",").map(value => value.trim()).filter(Boolean),
   surfaceId: "chat_assistant",
   placementKey: "default",
@@ -22,8 +31,7 @@ export function getPublisher(): ReturnType<typeof createPublisherServer> {
   publisher: { app_name: "Your saved app name", app_domain: "your.example", categories: [] },
   allowedFormats: ["banner"],
   positionHint: "between",
-  maxWidth: 728,
-  maxHeight: 90,
-  allowedSizes: [{ width: 728, height: 90 }]
+  allowedSizes: [{ width: 728, height: 90 }, { width: 320, height: 50 }],
+  responsiveSizeSelection: true
   });
 }

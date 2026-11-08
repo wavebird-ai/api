@@ -35,10 +35,12 @@ export async function plan(argv) {
   const files = [
     [join(example, "lib", `publisher.${ext}`), join(base, "lib", `publisher.${ext}`)],
     [join(example, "lib", `auth.${ext}`), join(base, "lib", `auth.${ext}`)],
+    [join(example, "lib", `turn-store.${ext}`), join(base, "lib", `turn-store.${ext}`)],
     [resolve(packageRoot, "templates", `model.${ext}`), join(base, "lib", `model.${ext}`)],
     [join(example, "app", "api", "generate", `route.${ext}`), join(appPath, "api", "generate", `route.${ext}`)],
     [join(example, "app", "api", "sponsor-slot", `route.${ext}`), join(appPath, "api", "sponsor-slot", `route.${ext}`)],
     [join(example, "app", "api", "sponsor-consent", `route.${ext}`), join(appPath, "api", "sponsor-consent", `route.${ext}`)],
+    [join(example, "app", "api", "sponsor-session", `route.${ext}`), join(appPath, "api", "sponsor-session", `route.${ext}`)],
     [resolve(packageRoot, "templates", `WavebirdPlacement.${componentExt}`), join(base, "components", `WavebirdPlacement.${componentExt}`)],
     [resolve(packageRoot, "templates", "NEXT-SETUP.md"), join(projectRoot, "WAVEBIRD-SETUP.md")]
   ];
@@ -62,6 +64,6 @@ export async function install(argv) {
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   install(process.argv.slice(2)).then(result => {
-    process.stdout.write(`Installed ${result.lang.toUpperCase()} Wavebird routes and connectors in ${result.projectRoot}. Read WAVEBIRD-SETUP.md.\n`);
+    process.stdout.write(`Installed ${result.lang.toUpperCase()} wavebird routes and connectors in ${result.projectRoot}. Read WAVEBIRD-SETUP.md.\n`);
   }).catch(error => { process.stderr.write(`${error.message}\n`); process.exitCode = 1; });
 }

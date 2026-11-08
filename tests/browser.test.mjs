@@ -1,6 +1,130 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { createPublisherAds } from "../dist/browser.js";
+import { pathToFileURL } from "node:url";
+
+const browserAsset = process.env.WAVEBIRD_JS_BROWSER_ASSET
+  ? pathToFileURL(process.env.WAVEBIRD_JS_BROWSER_ASSET).href
+  : new URL("../dist/browser.js", import.meta.url).href;
+const { createPublisherAds } = await import(browserAsset);
+
+test("browser refuses noncanonical workload before mounting", () => {
+  assert.throws(() => createPublisherAds({ target: { append() {} }, clientId: "wbproj_test", surfaceId: "chat_assistant", userId: "u", conversationId: "c",
+    jobType: "image_generation" }), /publisher_job_invalid/);
+});
+
+test("browser rejects missing and malformed required identity before mounting", () => {
+  const valid = { target: { append() {} }, clientId: "wbproj_test", surfaceId: "chat_assistant",
+    jobType: "chat", userId: "user_test", conversationId: "conversation_test" };
+  for (const field of ["clientId", "surfaceId", "userId", "conversationId"]) {
+    for (const value of [undefined, null, false, 0, "", "  ", { toString: () => "synthetic" }]) {
+      const options = { ...valid, [field]: value };
+      assert.throws(() => createPublisherAds(options), /publisher_|Application container and session/, `${field}: ${String(value)}`);
+    }
+  }
+  assert.throws(() => createPublisherAds({ ...valid, clientId: "other_project" }), /publisher_project_invalid/);
+  assert.throws(() => createPublisherAds({ ...valid, surfaceId: "invalid domain" }), /publisher_placement_invalid/);
+});
+
+test("browser rejects explicit invalid lifecycle and consent modes before mounting", () => {
+  const valid = { target: { append() { assert.fail("invalid mode mounted"); } },
+    clientId: "wbproj_test", surfaceId: "chat_assistant",
+    jobType: "chat", userId: "user_test", conversationId: "conversation_test" };
+  for (const field of ["timing", "consentMode"]) {
+    for (const value of [null, false, 0, ""]) {
+      assert.throws(() => createPublisherAds({ ...valid, [field]: value }),
+        /Invalid publisher configuration/, `${field}: ${String(value)}`);
+    }
+  }
+});
+
+test("browser rejects unsupported renderer script URLs before mounting", () => {
+  const valid = { target: { append() { assert.fail("invalid renderer URL mounted"); } },
+    clientId: "wbproj_test", surfaceId: "chat_assistant",
+    jobType: "chat", userId: "user_test", conversationId: "conversation_test" };
+  for (const rendererUrl of [null, false, 0, "", "http://api.wavebird.ai/v1/render.js",
+    "https://user:pass@api.wavebird.ai/v1/render.js",
+    "https://api.wavebird.ai/v1/render.js?cache=1",
+    "https://api.wavebird.ai/v1/render.js#fragment",
+    "https://foreign.example/v1/render.js"]) {
+    assert.throws(() => createPublisherAds({ ...valid, rendererUrl }),
+      /publisher_renderer_url_invalid/, String(rendererUrl));
+  }
+});
+
+test("pre-aborted generation does not invoke the publisher model request", async () => {
+  const previousWindow = globalThis.window, previousDocument = globalThis.document;
+  let requested = 0;
+  globalThis.document = {
+    createElement: () => ({ style: {}, setAttribute() {}, replaceChildren() {}, remove() {} }),
+    querySelector: () => null,
+  };
+  globalThis.window = {
+    wavebird: { createChatSponsor: () => ({ prepare: async () => {}, dispose() {} }) },
+    addEventListener() {}, removeEventListener() {},
+  };
+  let ads;
+  try {
+    ads = createPublisherAds({ target: { append() {} }, clientId: "wbproj_synthetic",
+      surfaceId: "chat_assistant", jobType: "chat", userId: "user_synthetic",
+      conversationId: "conversation_synthetic", consentMode: "own_cmp" });
+    await ads.ready;
+    const controller = new AbortController();
+    controller.abort();
+    await assert.rejects(ads.connectGeneration({ signal: controller.signal,
+      request: () => { requested++; return new Response("should not run"); },
+      consume: response => response.text(),
+    }), /generation_aborted/);
+    assert.equal(requested, 0);
+  } finally {
+    ads?.dispose();
+    globalThis.window = previousWindow;
+    globalThis.document = previousDocument;
+  }
+});
+
+test("opt-in turn binding uses the host session and rejects cross-context reuse", async () => {
+  const previousWindow = globalThis.window;
+  const previousDocument = globalThis.document;
+  const received = [];
+  globalThis.document = {
+    createElement: () => ({ style: {}, setAttribute() {}, replaceChildren() {}, remove() {} }),
+    querySelector: () => null,
+  };
+  globalThis.window = {
+    wavebird: { createChatSponsor(options) {
+      received.push(options);
+      return { prepare: async () => {}, setConversation: binding => received.push(binding), dispose() {} };
+    } },
+    addEventListener() {}, removeEventListener() {},
+  };
+  try {
+    assert.throws(() => createPublisherAds({ target: { append() {} }, clientId: "wbproj_test", surfaceId: "chat_assistant", userId: "u", conversationId: "c",
+      jobType: "chat", turnBinding: true }), /publisher_trusted_session_required/);
+    const ads = createPublisherAds({ target: { append() {} }, clientId: "wbproj_test", surfaceId: "chat_assistant", userId: "u", conversationId: "c",
+      jobType: "chat", sessionId: "trusted_session", turnBinding: true });
+    await ads.ready;
+    assert.equal(received[0].sessionId, "trusted_session");
+    assert.equal(received[0].turnBinding, true);
+    const result = await ads.connectGeneration({
+      request: headers => {
+        assert.equal(headers["x-wavebird-session-id"], "trusted_session");
+        assert.match(headers["x-wavebird-generation-id"], /^[A-Za-z0-9_-]{1,128}$/);
+        return new Response("model result");
+      },
+      consume: response => response.text(),
+    });
+    assert.equal(result, "model result");
+    assert.throws(() => ads.setConversation({ userId: { toString: () => "another" }, conversationId: "c", sessionId: "next_trusted_session" }), /Application session is required/);
+    assert.throws(() => ads.setConversation({ userId: "another", conversationId: " ", sessionId: "next_trusted_session" }), /Application session is required/);
+    assert.throws(() => ads.setConversation({ userId: "another", conversationId: "c", sessionId: "trusted_session" }), /publisher_session_reuse/);
+    ads.setConversation({ userId: "another", conversationId: "c", sessionId: "next_trusted_session" });
+    assert.equal(received.at(-1).sessionId, "next_trusted_session");
+    ads.dispose();
+  } finally {
+    globalThis.window = previousWindow;
+    globalThis.document = previousDocument;
+  }
+});
 
 test("After Banner forwards the saved format to the hosted renderer", async () => {
   const previousWindow = globalThis.window;
@@ -24,6 +148,7 @@ test("After Banner forwards the saved format to the hosted renderer", async () =
     });
     await ads.ready;
     assert.equal(received.timing, "after");
+    assert.equal(received.cleanupAfterClip, true, "successor package opts into natural-end Clip cleanup");
     assert.equal(received.placementEndpoint, "/api/package-after-slot");
     assert.equal(received.getFormat(), "banner");
     ads.dispose();
@@ -31,6 +156,114 @@ test("After Banner forwards the saved format to the hosted renderer", async () =
     globalThis.window = previousWindow;
     globalThis.document = previousDocument;
   }
+});
+
+test("During Image keeps transport completion separate from presentation and forwards workload", async () => {
+  const previousWindow = globalThis.window, previousDocument = globalThis.document;
+  const events = [];
+  let sponsorOptions, releasePresentation, bodyRead;
+  const presentation = new Promise(resolve => { releasePresentation = resolve; });
+  const consumedBody = new Promise(resolve => { bodyRead = resolve; });
+  globalThis.document = {
+    createElement: () => ({ style: {}, setAttribute() {}, replaceChildren() {}, remove() {} }),
+    querySelector: () => null,
+  };
+  globalThis.window = { addEventListener() {}, removeEventListener() {}, wavebird: {
+    createChatSponsor: options => {
+      sponsorOptions = options;
+      return { prepare: async () => {}, onStarted: () => events.push("started"),
+        onDone: () => events.push("transport_done"), onPresented: () => events.push("presented"),
+        onError: () => events.push("error"), dispose() {} };
+    },
+  } };
+  let ads;
+  try {
+    ads = createPublisherAds({ target: { append() {} }, clientId: "wbproj_image_lifecycle",
+      surfaceId: "image_generator", jobType: "image", userId: "user_test",
+      conversationId: "image_test", timing: "during", consentMode: "own_cmp" });
+    await ads.ready;
+    assert.equal(sponsorOptions.jobType, "image");
+    const pending = ads.connectGeneration({
+      request: headers => new Response([
+        { type: "started" }, { type: "response", status: 200, headers: [["content-type", "image/png"]] },
+        { type: "bytes", data: Buffer.from("synthetic image").toString("base64") }, { type: "done" },
+      ].map(item => JSON.stringify({ session_id: headers["x-wavebird-session-id"],
+        generation_id: headers["x-wavebird-generation-id"], ...item }) + "\n").join(""),
+      { headers: { "x-wavebird-generation-transport": "1" } }),
+      consume: async (response, lifecycle) => {
+        await response.arrayBuffer(); bodyRead(); await presentation;
+        lifecycle.onPresented(); lifecycle.onPresented(); return "image presented";
+      },
+    });
+    await consumedBody;
+    assert.deepEqual(events, ["started", "transport_done"]);
+    releasePresentation();
+    assert.equal(await pending, "image presented");
+    assert.deepEqual(events, ["started", "transport_done", "presented"]);
+  } finally {
+    ads?.dispose(); globalThis.window = previousWindow; globalThis.document = previousDocument;
+  }
+});
+
+test("a no-result During response terminates the slot without inventing presentation", async () => {
+  const previousWindow = globalThis.window, previousDocument = globalThis.document;
+  const events = [];
+  globalThis.document = { createElement: () => ({ style: {}, setAttribute() {}, replaceChildren() {}, remove() {} }),
+    querySelector: () => null };
+  globalThis.window = { addEventListener() {}, removeEventListener() {}, wavebird: {
+    createChatSponsor: () => ({ prepare: async () => {}, onStarted: () => events.push("started"),
+      onDone: () => events.push("done"), onPresented: () => events.push("presented"),
+      onError: () => events.push("terminal_no_result"), dispose() {} }),
+  } };
+  let ads;
+  try {
+    ads = createPublisherAds({ target: { append() {} }, clientId: "wbproj_image_noresult",
+      surfaceId: "image_generator", jobType: "image", userId: "user_test",
+      conversationId: "image_test", timing: "during", consentMode: "own_cmp" });
+    await ads.ready;
+    const result = await ads.connectGeneration({
+      request: headers => new Response([
+        { type: "started" }, { type: "response", status: 204, headers: [] }, { type: "done" },
+      ].map(item => JSON.stringify({ session_id: headers["x-wavebird-session-id"],
+        generation_id: headers["x-wavebird-generation-id"], ...item }) + "\n").join(""),
+      { headers: { "x-wavebird-generation-transport": "1" } }),
+      consume: async response => { assert.equal(response.status, 204); return "no image"; },
+    });
+    assert.equal(result, "no image");
+    assert.deepEqual(events, ["started", "terminal_no_result"]);
+  } finally {
+    ads?.dispose(); globalThis.window = previousWindow; globalThis.document = previousDocument;
+  }
+});
+
+test("After Clip forwards only publisher placement wiring and owns renderer lifecycle", async () => {
+  const previousWindow = globalThis.window;
+  const previousDocument = globalThis.document;
+  const slot = { style: {}, setAttribute() {}, replaceChildren() {}, remove() {} };
+  const calls = [];
+  globalThis.document = { createElement: () => slot, querySelector: () => null };
+  globalThis.window = {
+    wavebird: { createChatSponsor(options) {
+      calls.push(options);
+      return { prepare: async () => {}, onStarted: id => calls.push(["started", id]),
+        onDone: id => calls.push(["done", id]), dispose: () => calls.push("disposed") };
+    } }, addEventListener() {}, removeEventListener() {},
+  };
+  try {
+    const ads = createPublisherAds({ target: { append() {} }, clientId: "wbproj_clip",
+      surfaceId: "image_generator", jobType: "image", userId: "user_test",
+      conversationId: "image_test", timing: "after", consentMode: "wavebird_consent",
+      placementEndpoint: "/api/wavebird/placement", consentEndpoint: "/api/wavebird/consent",
+      getFormat: () => "clip" });
+    await ads.ready;
+    assert.equal(calls[0].getFormat(), "clip");
+    assert.equal(calls[0].timing, "after");
+    assert.equal(calls[0].placementEndpoint, "/api/wavebird/placement");
+    assert.equal(calls[0].secretKey, undefined);
+    assert.equal(calls[0].preferenceSecret, undefined);
+    ads.dispose();
+    assert.equal(calls.at(-1), "disposed");
+  } finally { globalThis.window = previousWindow; globalThis.document = previousDocument; }
 });
 
 test("built browser export follows active generation and discards a late response", async () => {
@@ -121,6 +354,79 @@ test("built browser export follows active generation and discards a late respons
     ads.dispose();
     assert.equal(events.at(-1)[0], "dispose");
   } finally {
+    globalThis.window = previousWindow;
+    globalThis.document = previousDocument;
+  }
+});
+
+test("After waits for the publisher to present the completed model response", async () => {
+  const previousWindow = globalThis.window, previousDocument = globalThis.document;
+  const events = [];
+  let releasePresentation, observedBody;
+  const presentation = new Promise(resolve => { releasePresentation = resolve; });
+  const bodyRead = new Promise(resolve => { observedBody = resolve; });
+  globalThis.document = {
+    createElement: () => ({ style: {}, setAttribute() {}, replaceChildren() {}, remove() {} }),
+    querySelector: () => null,
+  };
+  globalThis.window = { addEventListener() {}, removeEventListener() {}, wavebird: {
+    createChatSponsor: () => ({ prepare: async () => {}, onStarted: () => events.push("started"),
+      onDone: () => events.push("done"), onError: () => events.push("error"), dispose() {} }),
+  } };
+  try {
+    const ads = createPublisherAds({ target: { append() {} }, clientId: "wbproj_test",
+      surfaceId: "image_generator", jobType: "image", userId: "user_test",
+      conversationId: "image_test", timing: "after", consentMode: "own_cmp" });
+    await ads.ready;
+    const pending = ads.connectGeneration({
+      request: headers => new Response([
+        { type: "started" },
+        { type: "response", status: 200, headers: [["content-type", "image/png"]] },
+        { type: "bytes", data: Buffer.from("synthetic image").toString("base64") },
+        { type: "done" },
+      ].map(item => JSON.stringify({ session_id: headers["x-wavebird-session-id"],
+        generation_id: headers["x-wavebird-generation-id"], ...item }) + "\n").join(""),
+      { headers: { "x-wavebird-generation-transport": "1" } }),
+      consume: async response => {
+        await response.arrayBuffer();
+        observedBody();
+        await presentation;
+        return "presented";
+      },
+    });
+    await bodyRead;
+    assert.deepEqual(events, ["started"], "transport completion cannot start an After placement");
+    releasePresentation();
+    assert.equal(await pending, "presented");
+    assert.deepEqual(events, ["started", "done"]);
+    await assert.rejects(ads.connectGeneration({
+      request: headers => new Response([
+        { type: "started" },
+        { type: "response", status: 200, headers: [["content-type", "image/png"]] },
+        { type: "bytes", data: Buffer.from("synthetic image").toString("base64") },
+        { type: "done" },
+      ].map(item => JSON.stringify({ session_id: headers["x-wavebird-session-id"],
+        generation_id: headers["x-wavebird-generation-id"], ...item }) + "\n").join(""),
+      { headers: { "x-wavebird-generation-transport": "1" } }),
+      consume: async response => { await response.arrayBuffer(); throw new Error("presentation failed"); },
+    }), /presentation failed/);
+    assert.deepEqual(events, ["started", "done", "started", "error"],
+      "a failed presentation cannot trigger an After placement");
+    assert.equal(await ads.connectGeneration({
+      request: headers => new Response([
+        { type: "started" },
+        { type: "response", status: 204, headers: [] },
+        { type: "done" },
+      ].map(item => JSON.stringify({ session_id: headers["x-wavebird-session-id"],
+        generation_id: headers["x-wavebird-generation-id"], ...item }) + "\n").join(""),
+      { headers: { "x-wavebird-generation-transport": "1" } }),
+      consume: async response => { assert.equal(response.body, null); return "no result"; },
+    }), "no result");
+    assert.deepEqual(events, ["started", "done", "started", "error", "started"],
+      "a no-content response has no presented result for After timing");
+    ads.dispose();
+  } finally {
+    releasePresentation?.();
     globalThis.window = previousWindow;
     globalThis.document = previousDocument;
   }

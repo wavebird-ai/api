@@ -20,17 +20,52 @@ function loadRenderer(url) {
 
 export function createPublisherAds(options) {
   const target = options.target;
-  if (!target || !options.userId || !options.conversationId) throw new Error("Application container and session are required");
-  const timing = options.timing || "during", consentMode = options.consentMode || "wavebird_consent";
+  const requiredText = value => typeof value === "string" && value.trim().length > 0;
+  if (!target || typeof target.append !== "function" || !requiredText(options.userId) || !requiredText(options.conversationId))
+    throw new Error("Application container and session are required");
+  if (!["chat", "code", "image", "voice", "agent"].includes(options.jobType)) throw new Error("publisher_job_invalid");
+  if (typeof options.clientId !== "string" || !options.clientId.startsWith("wbproj_"))
+    throw new Error("publisher_project_invalid");
+  if (typeof options.surfaceId !== "string" || !/^[A-Za-z0-9_-]{1,128}$/.test(options.surfaceId))
+    throw new Error("publisher_placement_invalid");
+  if (options.turnBinding !== undefined && typeof options.turnBinding !== "boolean")
+    throw new Error("publisher_turn_binding_invalid");
+  const turnBinding = options.turnBinding === true;
+  const validId = value => typeof value === "string" && /^[A-Za-z0-9_-]{1,128}$/.test(value);
+  if (turnBinding && !validId(options.sessionId)) throw new Error("publisher_trusted_session_required");
+  const timing = options.timing === undefined ? "during" : options.timing;
+  const consentMode = options.consentMode === undefined ? "wavebird_consent" : options.consentMode;
   if (!["before", "during", "after"].includes(timing) || !["wavebird_consent", "own_cmp"].includes(consentMode)) throw new Error("Invalid publisher configuration");
-  let binding = { userId: options.userId, conversationId: options.conversationId, sessionId: crypto.randomUUID() };
+  const validEndpoint = value => {
+    if (typeof value !== "string" || !value || value.trim() !== value) return false;
+    try {
+      const base = new URL(window.location?.href ?? "https://publisher.invalid/");
+      const endpoint = new URL(value, base);
+      return ["http:", "https:"].includes(endpoint.protocol) && endpoint.origin === base.origin &&
+        !endpoint.username && !endpoint.password && !endpoint.hash;
+    } catch { return false; }
+  };
+  if ((options.placementEndpoint !== undefined && !validEndpoint(options.placementEndpoint)) ||
+      (options.consentEndpoint !== undefined && !validEndpoint(options.consentEndpoint)))
+    throw new Error("publisher_endpoint_invalid");
+  const rendererUrl = options.rendererUrl === undefined ? "https://api.wavebird.ai/v1/render.js" : options.rendererUrl;
+  if (rendererUrl !== "https://api.wavebird.ai/v1/render.js") throw new Error("publisher_renderer_url_invalid");
+  if (options.getFormat !== undefined && typeof options.getFormat !== "function")
+    throw new Error("publisher_format_hook_invalid");
+  let privacyTarget = null;
+  if (consentMode === "wavebird_consent" && options.privacySettingsTarget !== undefined) {
+    if (typeof options.privacySettingsTarget !== "string" || !options.privacySettingsTarget.trim())
+      throw new Error("publisher_privacy_target_invalid");
+    try { privacyTarget = document.querySelector(options.privacySettingsTarget); }
+    catch { throw new Error("publisher_privacy_target_invalid"); }
+  }
+  let binding = { userId: options.userId, conversationId: options.conversationId,
+    sessionId: turnBinding ? options.sessionId : crypto.randomUUID() };
   let sponsor = null, disposed = false, context = 0, active = null;
   const slot = document.createElement("section");
   slot.setAttribute("aria-label", "Sponsored placement");
   slot.style.cssText = "width:100%;height:100%;overflow:hidden;margin:0 auto";
   target.append(slot);
-  const privacyTarget = consentMode === "wavebird_consent" && options.privacySettingsTarget
-    ? document.querySelector(options.privacySettingsTarget) : null;
   const openPrivacySettings = () => { if (!disposed) sponsor?.openPrivacySettings(); };
   privacyTarget?.addEventListener("click", openPrivacySettings);
   const notify = (method, id) => {
@@ -40,6 +75,10 @@ export function createPublisherAds(options) {
       sponsor = null; slot.hidden = true; slot.replaceChildren();
     }
   };
+  const notifyPresented = id => {
+    // Additive bridge: an already deployed renderer may predate this event.
+    if (typeof sponsor?.onPresented === "function") notify("onPresented", id);
+  };
   const current = job => !disposed && !job.cancelled && job.context === context && active === job;
   const event = (job, type) => {
     if (!current(job)) return;
@@ -48,8 +87,16 @@ export function createPublisherAds(options) {
       job.state = "started"; notify("onStarted", job.id);
     } else if (type === "progress") {
       if (job.state === "started") { job.progressed = true; notify("onDelta", job.id); }
-    } else if (["done", "error", "abort"].includes(type)) {
+    } else if (type === "no_result") {
       if (job.state !== "started") return;
+      job.state = "no_result";
+      if (timing !== "after") notify("onError", job.id);
+    } else if (type === "presented") {
+      if (!["started", "done"].includes(job.state) || job.presented) return;
+      job.presented = true; notifyPresented(job.id);
+    } else if (["done", "error", "abort"].includes(type)) {
+      if (job.state !== "started" &&
+          !(job.state === "done" && !job.consumed && ["error", "abort"].includes(type))) return;
       job.state = type;
       notify(type === "done" ? "onDone" : type === "abort" ? "onAbort" : "onError", job.id);
     }
@@ -57,11 +104,16 @@ export function createPublisherAds(options) {
   const prepare = () => { if (!disposed && sponsor) void sponsor.prepare().catch(() => {}); };
   function setConversation(next) {
     if (disposed) return;
-    if (!next.userId || !next.conversationId) throw new Error("Application session is required");
-    if (next.userId === binding.userId && next.conversationId === binding.conversationId) return;
+    if (!requiredText(next?.userId) || !requiredText(next?.conversationId))
+      throw new Error("Application session is required");
+    if (turnBinding && !validId(next.sessionId)) throw new Error("publisher_trusted_session_required");
+    if (next.userId === binding.userId && next.conversationId === binding.conversationId &&
+        (!turnBinding || next.sessionId === binding.sessionId)) return;
+    if (turnBinding && next.sessionId === binding.sessionId) throw new Error("publisher_session_reuse");
     if (active) event(active, "abort");
     context++; active = null;
-    binding = { userId: next.userId, conversationId: next.conversationId, sessionId: crypto.randomUUID() };
+    binding = { userId: next.userId, conversationId: next.conversationId,
+      sessionId: turnBinding ? next.sessionId : crypto.randomUUID() };
     sponsor?.setConversation(binding); prepare();
   }
   function dispose() {
@@ -73,10 +125,12 @@ export function createPublisherAds(options) {
     window.removeEventListener("pagehide", dispose);
   }
   window.addEventListener("pagehide", dispose);
-  const ready = loadRenderer(options.rendererUrl || "https://api.wavebird.ai/v1/render.js").then(() => {
+  const ready = loadRenderer(rendererUrl).then(() => {
     if (disposed) return;
     sponsor = window.wavebird.createChatSponsor({ target: slot, ...binding,
-      clientId: options.clientId, surfaceId: options.surfaceId, timing, consentMode,
+      clientId: options.clientId, surfaceId: options.surfaceId, jobType: options.jobType, timing, consentMode,
+      cleanupAfterClip: true,
+      ...(turnBinding ? { turnBinding: true } : {}),
       ...(options.getFormat === undefined ? {} : { getFormat: options.getFormat }),
       ...(options.placementEndpoint === undefined ? {} : { placementEndpoint: options.placementEndpoint }),
       ...(options.consentEndpoint === undefined ? {} : { consentEndpoint: options.consentEndpoint }) });
@@ -92,7 +146,8 @@ export function createPublisherAds(options) {
   }).catch(() => {});
 
   async function connectGeneration({ request, consume, signal }) {
-    const job = { id: crypto.randomUUID(), sessionId: binding.sessionId, context, state: "pending", cancelled: false };
+    const job = { id: crypto.randomUUID(), sessionId: binding.sessionId, context, state: "pending", cancelled: false,
+      presented: false, consumed: false };
     if (active) event(active, "abort");
     active = job;
     let reader = null, ended = false, buffer = "";
@@ -102,8 +157,14 @@ export function createPublisherAds(options) {
     if (signal?.aborted) abort();
     const headers = { "x-wavebird-session-id": job.sessionId, "x-wavebird-generation-id": job.id };
     try {
+      if (signal?.aborted) throw new Error("generation_aborted");
       const response = await request(headers);
-      if (response.headers.get("x-wavebird-generation-transport") !== "1") return await consume(response);
+      if (!current(job)) throw new Error("generation_aborted");
+      if (response.headers.get("x-wavebird-generation-transport") !== "1") {
+        const result = await consume(response, { onDelta() {} });
+        if (!current(job)) throw new Error("generation_aborted");
+        return result;
+      }
       if (!response.body) throw new Error("generation_transport_missing");
       reader = response.body.getReader();
       async function nextRecord() {
@@ -140,11 +201,13 @@ export function createPublisherAds(options) {
                 if (typeof record.data !== "string" || record.data.length > 21848 || !/^[A-Za-z0-9+/]*={0,2}$/.test(record.data)) throw new Error("generation_bytes_invalid");
                 const raw = atob(record.data), bytes = Uint8Array.from(raw, value => value.charCodeAt(0));
                 controller.enqueue(bytes);
-                if (timing !== "before" && !["image", "image_generation"].includes(options.jobType)) event(job, "progress");
+                if (bytes.length && timing !== "before" && options.jobType !== "image") event(job, "progress");
                 return;
               }
               if (["done", "error", "abort"].includes(record.type)) {
-                ended = true; event(job, record.type);
+                ended = true;
+                if (record.type === "done" && [204, 205, 304].includes(metadata.status)) event(job, "no_result");
+                else if (record.type !== "done" || timing !== "after") event(job, record.type);
                 if (record.type === "done" || !metadata.status.toString().startsWith("2")) controller.close();
                 else controller.error(new Error("generation_" + record.type));
                 return;
@@ -158,12 +221,22 @@ export function createPublisherAds(options) {
       if ([204, 205, 304].includes(metadata.status)) {
         const record = await nextRecord();
         if (!["done", "error", "abort"].includes(record.type)) throw new Error("generation_transport_invalid");
-        ended = true; event(job, record.type);
+        ended = true;
+        if (record.type === "done") event(job, "no_result");
+        else event(job, record.type);
       }
-      const primary = new Response([204, 205, 304].includes(metadata.status) ? null : output, {
+      const noBody = [204, 205, 304].includes(metadata.status);
+      const primary = new Response(noBody ? null : output, {
         status: metadata.status, statusText: metadata.status_text || "", headers: metadata.headers
       });
-      return await consume(primary, { onDelta: () => event(job, "progress") });
+      const result = await consume(primary, { onDelta: () => {
+        event(job, "progress");
+        if (timing === "before" || (timing === "during" && options.jobType === "image")) event(job, "presented");
+      }, onPresented: () => event(job, "presented") });
+      job.consumed = true;
+      if (timing === "before" || (timing === "during" && options.jobType === "image")) event(job, "presented");
+      if (timing === "after" && ended && !noBody) event(job, "done");
+      return result;
     } catch (error) {
       event(job, signal?.aborted ? "abort" : "error");
       throw error;
@@ -179,8 +252,7 @@ export function createPublisherAds(options) {
     withdraw: () => sponsor ? sponsor.withdraw() : Promise.resolve({ status: "renderer_unavailable" }) };
 }
 
-export async function connectPublisherGeneration(url, init, consume) {
-  const ads = window.publisherAds;
+export async function connectPublisherGeneration(url, init, consume, ads = window.publisherAds) {
   if (!ads) return consume(await fetch(url, init), { onDelta() {} });
   return ads.connectGeneration({
     signal: init.signal ?? undefined,

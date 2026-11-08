@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { createPublisherServer } from "../dist/server.js";
+import { createPublisherServer, createPublisherTurnJournal } from "../dist/server.js";
 
 const saved = {
   apiBaseUrl: "https://api.wavebird.ai",
@@ -22,13 +22,248 @@ const saved = {
   maxWidth: 728,
   maxHeight: 90,
   allowedSizes: [{ width: 728, height: 90 }],
+  responsiveSizeSelection: false,
   blockedCategories: ["IAB25"]
 };
+
+test("unknown server configuration fields fail closed", () => {
+  assert.throws(() => createPublisherServer({ ...saved, unknownOption: true }), /publisher_option_unknown/);
+  assert.throws(() => createPublisherServer({ ...saved, publisher: { ...saved.publisher, unknownOption: true } }), /publisher_identity_invalid/);
+  assert.throws(() => createPublisherServer({ ...saved, allowedSizes: [{ width: 728, height: 90, unknownOption: true }] }), /publisher_sizes_invalid/);
+});
+
+test("allowed size and envelope bounds match the current placement contract", () => {
+  const accepted = Array.from({ length: 8 }, (_, index) => ({ width: 300 + index, height: 250 }));
+  assert.doesNotThrow(() => createPublisherServer({ ...saved, allowedSizes: accepted, maxWidth: 8192, maxHeight: 8192 }));
+  assert.doesNotThrow(() => createPublisherServer({ ...saved, allowedSizes: [{ width: 4096, height: 4096 }], maxWidth: 8192, maxHeight: 8192 }));
+  for (const allowedSizes of [
+    [{ width: 4097, height: 250 }], [{ width: 300, height: 4097 }],
+    Array.from({ length: 9 }, (_, index) => ({ width: 300 + index, height: 250 })),
+    [{ width: 300, height: 250 }, { width: 300, height: 250 }],
+  ]) assert.throws(() => createPublisherServer({ ...saved, allowedSizes }), /publisher_sizes_invalid/);
+  for (const envelope of [{ maxWidth: 8193 }, { maxHeight: 8193 }])
+    assert.throws(() => createPublisherServer({ ...saved, ...envelope }), /publisher_envelope_invalid/);
+});
+
+test("API base URL accepts explicit HTTPS environments but rejects disguised destinations", () => {
+  for (const apiBaseUrl of [undefined, "https://api.wavebird.ai", "https://api.wavebird.ai/v1", "https://qa-api.example:8443/base/"])
+    assert.doesNotThrow(() => createPublisherServer({ ...saved, apiBaseUrl }));
+  for (const apiBaseUrl of [null, false, 0, "", "http://api.wavebird.ai", "https://api.wavebird.ai@other.example",
+    "https://api.wavebird.ai?tenant=other", "https://api.wavebird.ai#other", "https://api.wavebird.ai\\@other.example",
+    "https://api.wavebird.ai:bad"]) {
+    assert.throws(() => createPublisherServer({ ...saved, apiBaseUrl }), /publisher_api_https_required/);
+  }
+});
+
+test("preference secret is validated at setup using the same UTF-8 byte rule as Python", async () => {
+  for (const preferenceSecret of [undefined, null, "short", "🔐".repeat(7)]) {
+    assert.throws(() => createPublisherServer({ ...saved, preferenceSecret }), /preference_secret_required/);
+  }
+  const server = createPublisherServer({ ...saved, preferenceSecret: "🔐".repeat(8) });
+  await withFetch(async (_url, init) => Response.json({ authoritative_consent: {
+    lifecycle_state: JSON.parse(init.body).lifecycle_state, revision: 1,
+  } }), async () => {
+    const result = await server.consentPOST(routeRequest("/api/sponsor-consent", {
+      session_id: "session_utf8", lifecycle_state: "granted", revision: 1, remember_for_30_days: true,
+    }));
+    assert.equal(result.status, 200);
+    assert.match(result.headers.get("set-cookie"), /Max-Age=/);
+  });
+});
+
+test("server configuration accepts only canonical v1 workload names", () => {
+  for (const jobType of ["chat", "code", "image", "voice", "agent"])
+    assert.doesNotThrow(() => createPublisherServer({ ...saved, jobType }));
+  for (const jobType of [undefined, null, "", "image_generation", "unsupported"])
+    assert.throws(() => createPublisherServer({ ...saved, jobType }), /publisher_job_invalid/);
+});
+
+test("project and placement identifiers require strings before pattern validation", () => {
+  assert.throws(() => createPublisherServer({ ...saved, clientId: { toString: () => "wbproj_spoof" } }), /publisher_project_invalid/);
+  assert.throws(() => createPublisherServer({ ...saved, surfaceId: 42 }), /publisher_placement_invalid/);
+  assert.throws(() => createPublisherServer({ ...saved, placementKey: { toString: () => "default" } }), /publisher_placement_invalid/);
+});
+
+test("required server identity and category inputs reject wrong types and empty values", () => {
+  assert.throws(() => createPublisherServer({ ...saved, secretKey: { toString: () => "sk_test_spoof" } }), /publisher_server_key_invalid/);
+  for (const publisher of [
+    { ...saved.publisher, app_name: "" },
+    { ...saved.publisher, app_name: "  " },
+    { ...saved.publisher, app_domain: "" },
+    { ...saved.publisher, app_domain: "  " },
+    { ...saved.publisher, categories: [123] },
+  ]) assert.throws(() => createPublisherServer({ ...saved, publisher }), /publisher_identity_invalid/);
+  for (const blockedCategories of ["bad", [123], [""]]) {
+    assert.throws(() => createPublisherServer({ ...saved, blockedCategories }), /publisher_blocked_categories_invalid/);
+  }
+});
+
+test("explicit GDPR policy flag must be a boolean", () => {
+  for (const gdprApplies of [undefined, false, true])
+    assert.doesNotThrow(() => createPublisherServer({ ...saved, gdprApplies }));
+  for (const gdprApplies of [null, 0, 1, "true"])
+    assert.throws(() => createPublisherServer({ ...saved, gdprApplies }), /publisher_gdpr_invalid/);
+});
+
+test("server diagnostic hook rejects invalid supplied values and contains callback failure", async () => {
+  for (const onDiagnostic of [null, false, 0, "", "callback", {}])
+    assert.throws(() => createPublisherServer({ ...saved, onDiagnostic }), /publisher_diagnostic_invalid/);
+  const codes = [];
+  const server = createPublisherServer({ ...saved,
+    sessionIdForRequest: () => { throw new Error("synthetic_session_unavailable"); },
+    turnJournal: {
+      claimPlacement: async () => true, releaseRejectedPlacement: async () => {},
+      bind: async () => {}, claimGeneration: async () => true, phase: async () => {},
+    },
+    onDiagnostic: code => { codes.push(code); throw new Error("synthetic_diagnostic_failure"); },
+  });
+  const result = await server.sessionGET(routeRequest("/api/sponsor-session"));
+  assert.equal(result.status, 503);
+  assert.deepEqual(await result.json(), { error: "publisher_session_unavailable" });
+  assert.deepEqual(codes, ["publisher_session_unavailable"]);
+});
+
+test("server session and journal hooks reject incomplete and malformed pairs", () => {
+  const journal = Object.fromEntries(["claimPlacement", "releaseRejectedPlacement", "bind", "claimGeneration", "phase"]
+    .map(name => [name, async () => true]));
+  assert.doesNotThrow(() => createPublisherServer(saved));
+  assert.doesNotThrow(() => createPublisherServer({ ...saved, sessionIdForRequest: () => "session", turnJournal: journal }));
+  for (const [sessionIdForRequest, turnJournal] of [
+    [undefined, journal], [() => "session", undefined], [null, journal], [() => "session", null],
+    [false, journal], [0, journal], ["", journal], [() => "session", false],
+    [() => "session", 0], [() => "session", ""],
+  ]) assert.throws(() => createPublisherServer({ ...saved, sessionIdForRequest, turnJournal }), /publisher_turn_journal_invalid/);
+});
 
 const routeRequest = (path, body, headers = {}) => new Request(`https://publisher.example${path}`, {
   method: body === undefined ? "GET" : "POST",
   headers: { host: "publisher.example", authorization: "Session publisher", origin: "https://publisher.example", "sec-fetch-site": "same-origin", ...headers },
   ...(body === undefined ? {} : { body: JSON.stringify(body) })
+});
+
+test("opt-in server binds only a trusted session and exact turn before lifecycle reports", async () => {
+  const calls = [];
+  const journal = {
+    placed: new Set(), generated: new Set(),
+    async claimPlacement(turn) { calls.push(["claimPlacement", turn]); if (this.placed.has(turn.turnId)) return false; this.placed.add(turn.turnId); return true; },
+    async releaseRejectedPlacement(turn) { calls.push(["releaseRejectedPlacement", turn]); this.placed.delete(turn.turnId); },
+    async bind(turn, jobId) { calls.push(["bind", turn, jobId]); },
+    async claimGeneration(turn) { calls.push(["claimGeneration", turn]); if (this.generated.has(turn.turnId)) return false; this.generated.add(turn.turnId); return true; },
+    async phase(turn, event) { calls.push(["phase", turn, event]); },
+  };
+  const server = createPublisherServer({ ...saved, sessionIdForRequest: request =>
+    request.headers.get("authorization") === "Session publisher" ? "trusted_session" : null,
+    turnJournal: journal });
+  const body = { session_id: "trusted_session", turn_id: "turn_one" };
+  let upstream = 0;
+  await withFetch(async () => { upstream++; return Response.json({ job_id: "job_synthetic", decision: { fill: false } }); }, async () => {
+    assert.deepEqual(await (await server.sessionGET(routeRequest("/api/sponsor-session"))).json(), { session_id: "trusted_session" });
+    assert.equal((await server.sessionGET(routeRequest("/api/sponsor-session", undefined, { authorization: "" }))).status, 401);
+    assert.equal((await server.sessionGET(routeRequest("/api/sponsor-session", undefined, { origin: "https://foreign.example" }))).status, 403);
+    assert.equal((await server.placementPOST(routeRequest("/api/sponsor-slot", { ...body, session_id: "forged" }))).status, 401);
+    assert.equal((await server.placementPOST(routeRequest("/api/sponsor-slot", { ...body, turn_id: "bad turn" }))).status, 401);
+    assert.equal((await server.placementPOST(routeRequest("/api/sponsor-slot", body, { origin: "https://foreign.example" }))).status, 403);
+    assert.equal(upstream, 0);
+    assert.equal((await server.placementPOST(routeRequest("/api/sponsor-slot", body))).status, 200);
+    assert.equal((await server.placementPOST(routeRequest("/api/sponsor-slot", body))).status, 409);
+  });
+  assert.equal(upstream, 1);
+  assert.equal(calls.find(([kind]) => kind === "bind")[2], "job_synthetic");
+  assert.deepEqual(calls.find(([kind]) => kind === "bind")[1], {
+    projectId: saved.clientId, surfaceId: saved.surfaceId, sessionId: "trusted_session", turnId: "turn_one",
+  });
+  const generation = () => routeRequest("/api/generate", {}, {
+    "x-wavebird-session-id": "trusted_session", "x-wavebird-generation-id": "turn_one",
+  });
+  assert.equal((await server.withGeneration({ request: routeRequest("/api/generate", {}, {
+    "x-wavebird-session-id": "forged", "x-wavebird-generation-id": "turn_one" }),
+    run: () => { throw new Error("must_not_run"); } })).status, 401);
+  const result = await server.withGeneration({ request: generation(), run: () => new Response("model result") });
+  assert.equal(result.status, 200);
+  assert.equal(result.headers.get("x-wavebird-generation-transport"), "1");
+  assert.match(await result.text(), /model result|bW9kZWwgcmVzdWx0/);
+  assert.deepEqual(calls.filter(([kind]) => kind === "phase").map(([, , phase]) => phase), ["started", "finished"]);
+  assert.equal((await server.withGeneration({ request: generation(), run: () => { throw new Error("must_not_run"); } })).status, 409);
+});
+
+test("normal opt-in path automatically reports the bound job in order without model delay", async () => {
+  const rows = new Map();
+  const storage = {
+    async atomic(scope, key, transition) {
+      const id = `${scope}:${key}`;
+      const { state, result } = transition(rows.get(id) ?? null);
+      rows.set(id, state);
+      return result;
+    },
+    async scan(scope, cursor, limit) {
+      return [...rows.keys()].filter(id => id.startsWith(`${scope}:`)).map(id => id.slice(65))
+        .filter(key => key > cursor).sort().slice(0, limit);
+    },
+  };
+  let server;
+  const journal = createPublisherTurnJournal({ storage,
+    keySecret: "synthetic-stable-turn-key-secret-32-bytes",
+    reportGeneration: (jobId, event) => server.reportGeneration(jobId, event),
+  });
+  server = createPublisherServer({ ...saved, sessionIdForRequest: () => "trusted_session", turnJournal: journal });
+  const calls = [];
+  await withFetch(async (url) => {
+    calls.push(url);
+    if (url.endsWith("/placements?wait_ms=1500"))
+      return Response.json({ job_id: "job_synthetic", decision: { fill: false } });
+    return Response.json({ accepted: true });
+  }, async () => {
+    const placement = await server.placementPOST(routeRequest("/api/sponsor-slot", {
+      session_id: "trusted_session", turn_id: "turn_one",
+    }));
+    assert.equal(placement.status, 200);
+    const result = await server.withGeneration({
+      request: routeRequest("/api/generate", {}, {
+        "x-wavebird-session-id": "trusted_session", "x-wavebird-generation-id": "turn_one",
+      }),
+      run: () => new Response("model result"),
+    });
+    assert.match(await result.text(), /bW9kZWwgcmVzdWx0/);
+    for (let i = 0; i < 100 && calls.length < 3; i++) await new Promise(resolve => setTimeout(resolve, 5));
+    assert.deepEqual(calls.map(url => new URL(url).pathname), [
+      "/v1/placements", "/v1/jobs/job_synthetic/generation/started", "/v1/jobs/job_synthetic/generation/finished",
+    ]);
+  });
+});
+
+test("opt-in no-fill without a job remains empty and unbound", async () => {
+  const calls = [];
+  const journal = {
+    async claimPlacement(turn) { calls.push(["claim", turn.turnId]); return true; },
+    async releaseRejectedPlacement() { throw Error("unexpected release"); },
+    async bind() { throw Error("no-fill must not bind"); },
+    async claimGeneration() { return true; },
+    async phase(_turn, event) { calls.push(["phase", event]); },
+  };
+  const server = createPublisherServer({ ...saved,
+    sessionIdForRequest: () => "trusted_session", turnJournal: journal });
+  let responseBody = { decision: { fill: false }, placement: null };
+  await withFetch(async () => Response.json(responseBody), async () => {
+    const placement = await server.placementPOST(routeRequest("/api/sponsor-slot", {
+      session_id: "trusted_session", turn_id: "turn_no_fill",
+    }));
+    assert.equal(placement.status, 200);
+    assert.deepEqual(await placement.json(), responseBody);
+    const generated = await server.withGeneration({
+      request: routeRequest("/api/generate", {}, {
+        "x-wavebird-session-id": "trusted_session", "x-wavebird-generation-id": "turn_no_fill",
+      }),
+      run: () => new Response("model result"),
+    });
+    assert.equal(generated.status, 200);
+    await generated.text();
+    responseBody = { decision: { fill: true }, placement: {} };
+    assert.equal((await server.placementPOST(routeRequest("/api/sponsor-slot", {
+      session_id: "trusted_session", turn_id: "turn_bad_fill",
+    }))).status, 502);
+  });
+  assert.deepEqual(calls.filter(([kind]) => kind === "phase").map(([, phase]) => phase), ["started", "finished"]);
+  assert.equal(calls.filter(([kind]) => kind === "claim").length, 2);
 });
 
 async function withFetch(mock, run) {
@@ -60,10 +295,58 @@ test("saved Banner configuration drives the existing REST placement payload", as
   assert.deepEqual(body.slot_hint.allowed_sizes, [{ width: 728, height: 90 }]);
   assert.deepEqual(body.overrides.allowed_formats, ["banner"]);
   assert.equal(body.overrides.timing, "during");
+  assert.equal(Object.hasOwn(body.overrides, "gdpr_applies"), false);
+  assert.equal(body.consent.gdpr_applies, true);
+  assert.equal(Object.hasOwn(body.overrides, "bidfloor"), false);
+  assert.equal(Object.hasOwn(body.overrides, "bidfloor_currency"), false);
   assert.equal(body.overrides.publisher.app_domain, "publisher.example");
   assert.deepEqual(body.overrides.publisher.categories, ["IAB19"]);
   assert.deepEqual(body.overrides.blocked_categories, ["IAB25"]);
   assert.equal(body.consent.consent_source, "wrapper_cmp");
+  assert.equal(calls[0].init.body.includes("sk_test_server_only"), false);
+});
+
+test("explicit zero floor is preserved while incomplete or malformed overrides fail", async () => {
+  for (const options of [
+    { bidfloor: 0 }, { bidfloorCurrency: "EUR" },
+    { bidfloor: null, bidfloorCurrency: "EUR" },
+    { bidfloor: -1, bidfloorCurrency: "EUR" },
+    { bidfloor: 1, bidfloorCurrency: "EU" },
+  ]) assert.throws(() => createPublisherServer({ ...saved, ...options }), /publisher_bidfloor_override_invalid/);
+  const server = createPublisherServer({ ...saved, bidfloor: 0, bidfloorCurrency: "eur" });
+  let payload;
+  await withFetch(async (_url, init) => {
+    payload = JSON.parse(init.body);
+    return Response.json({ decision: { fill: false }, placement: null });
+  }, async () => {
+    assert.equal((await server.placementPOST(routeRequest("/api/sponsor-slot", { session_id: "session_zero_floor" }))).status, 200);
+  });
+  assert.equal(payload.overrides.bidfloor, 0);
+  assert.equal(payload.overrides.bidfloor_currency, "EUR");
+});
+
+test("saved Clip configuration uses the package transport without broadening Banner or Native scope", async () => {
+  const clip = createPublisherServer({ ...saved, timing: "after", jobType: "image",
+    allowedFormats: ["clip"], maxWidth: 640, maxHeight: 360,
+    allowedSizes: [{ width: 640, height: 360, formats: ["clip"] }] });
+  const calls = [];
+  await withFetch(async (url, init) => {
+    calls.push({ url, init, body: JSON.parse(init.body) });
+    return Response.json({ decision: { fill: false, no_fill_reason: "no_fill" }, placement: null });
+  }, async () => {
+    const result = await clip.placementPOST(routeRequest("/api/sponsor-slot", { session_id: "session_clip" }));
+    assert.equal(result.status, 200);
+    assert.equal((await result.json()).decision.fill, false);
+    assert.equal((await clip.placementPOST(routeRequest("/api/sponsor-slot", {}, { origin: "https://other.example" }))).status, 403);
+    assert.equal((await clip.placementPOST(routeRequest("/api/sponsor-slot", {}, { authorization: "" }))).status, 401);
+    assert.equal((await clip.placementPOST(routeRequest("/api/sponsor-slot", {}, { "sec-gpc": "1" }))).status, 403);
+  });
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].url, "https://api.wavebird.ai/v1/placements?wait_ms=1500");
+  assert.equal(calls[0].init.headers.Authorization, "Bearer sk_test_server_only");
+  assert.deepEqual(calls[0].body.overrides.allowed_formats, ["clip"]);
+  assert.equal(calls[0].body.overrides.timing, "after");
+  assert.deepEqual(calls[0].body.slot_hint.allowed_sizes, [{ width: 640, height: 360 }]);
   assert.equal(calls[0].init.body.includes("sk_test_server_only"), false);
 });
 
@@ -80,6 +363,31 @@ test("empty optional category arrays are omitted from the existing REST payload"
   });
   assert.equal(Object.hasOwn(payload.overrides.publisher, "categories"), false);
   assert.equal(Object.hasOwn(payload.overrides, "blocked_categories"), false);
+});
+
+test("opaque supported placement and consent response payloads relay without invented partner semantics", async () => {
+  const server = createPublisherServer(saved);
+  const placementPayload = {
+    slot_id: "slot_synthetic", status: "ready", fill: true,
+    decision: { fill: true, format: "banner", metadata: { opaque_partner_payload: { list: [0, false, null, "unknown"] } } },
+    placement: { width: 728, height: 90, render: { opaque_creative: { nested: ["keep", { value: 0 }] } } },
+    future_additive: { token: "opaque" },
+  };
+  await withFetch(async () => Response.json(placementPayload, { headers: { "x-request-id": "request_synthetic" } }), async () => {
+    const result = await server.placementPOST(routeRequest("/api/sponsor-slot", { session_id: "session_synthetic" }));
+    assert.equal(result.status, 200);
+    assert.equal(result.headers.get("x-request-id"), "request_synthetic");
+    assert.deepEqual(await result.json(), placementPayload);
+  });
+  const consentPayload = { authoritative_consent: { lifecycle_state: "granted", revision: 2 },
+    opaque_extensions: { preserved: [null, false, 0, "future"] } };
+  await withFetch(async () => Response.json(consentPayload), async () => {
+    const result = await server.consentPOST(routeRequest("/api/sponsor-consent", {
+      session_id: "session_synthetic", lifecycle_state: "granted", revision: 2, remember_for_30_days: false,
+    }));
+    assert.equal(result.status, 200);
+    assert.deepEqual(await result.json(), consentPayload);
+  });
 });
 
 test("No-Fill is relayed; missing auth, wrong origin, and GPC never reach Wavebird", async () => {
@@ -158,6 +466,22 @@ test("existing sandbox No-Fill control is forwarded only with a Test key", async
   await withFetch(async () => { throw new Error("upstream_must_not_run"); }, async () => {
     assert.equal((await liveServer.placementPOST(routeRequest("/api/sponsor-slot?qa_test_outcome=no_fill", {}))).status, 403);
   });
+});
+
+test("Test and production server keys share the package path with Test-only loopback HTTP", async () => {
+  assert.throws(() => createPublisherServer({ ...saved, secretKey: "pk_publishable_wrong_scope" }), /publisher_server_key_invalid/);
+  assert.doesNotThrow(() => createPublisherServer({ ...saved, publicOrigins: ["http://localhost:4173"] }));
+  assert.throws(() => createPublisherServer({ ...saved, secretKey: "sk_live_synthetic", publicOrigins: ["http://localhost:4173"] }), /publisher_public_origins_invalid/);
+  const server = createPublisherServer({ ...saved, secretKey: "sk_live_synthetic" });
+  const calls = [];
+  await withFetch(async (url, init) => {
+    calls.push({ url, init });
+    return Response.json({ decision: { fill: false }, placement: null });
+  }, async () => {
+    assert.equal((await server.placementPOST(routeRequest("/api/sponsor-slot", { session_id: "session_live_synthetic" }))).status, 200);
+  });
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].init.headers.Authorization, "Bearer sk_live_synthetic");
 });
 
 test("consent rejects unauthenticated, cross-origin, GPC, malformed, and external-protocol input before sync", async () => {

@@ -1,60 +1,46 @@
-# Wavebird publisher API
+# wavebird API
 
-`@wavebirdai/api` is a GitHub pilot prerelease for Banner/Native integration with the existing Wavebird REST API and hosted renderer. It is not published to npm. The established [`wavebird`](https://www.npmjs.com/package/wavebird) SDK remains separate. Version `0.1.0-local.4` requires explicit public-origin binding.
+Integrate Banner, Native and Clip ads into your AI app. wavebird handles ad delivery and consent. Your app keeps its existing login, model and result display.
 
-## Installation
+[API docs](https://wavebird.ai/api/quickstart) | [Dashboard](https://dashboard.wavebird.ai/wavebird) | [Troubleshooting](https://wavebird.ai/api/troubleshooting)
 
-After the versioned pilot release is published, install the exact asset directly from GitHub:
+## Choose your language
 
-```sh
-npm install https://github.com/wavebird-ai/api/releases/download/v0.1.0-local.4/wavebirdai-api-0.1.0-local.4.tgz
-```
+| Language | Package and guide |
+| --- | --- |
+| JavaScript | `@wavebirdai/api`, follow the steps below |
+| TypeScript | `@wavebirdai/api`, with included types and TypeScript examples |
+| Python | `wavebird-publisher-server`, follow the [Python guide](python/README.md) |
 
-To evaluate this checkout before publication, build and install its tarball instead:
+Native iOS and Android packages are not currently available. See [integration paths](https://wavebird.ai/api/integration-paths) for supported environments.
 
-```sh
-npm run build
-npm pack --pack-destination .
-npm install /path/to/wavebirdai-api-0.1.0-local.4.tgz
-```
+## Set up JavaScript or TypeScript
 
-The [full REST reference](https://wavebird.ai/api/reference/endpoints) remains available for integrations without this package.
+Use Node.js 20 or later on your server.
 
-Both JavaScript and TypeScript use the same package and URL; there is no separate language package.
+1. **Open your project in Dashboard.** Choose your language and package version. Save your HTTPS app URL and approved origins. `www.example.com` and `example.com` are separate origins.
+2. **Install the package.** Run this in your app's terminal, in the folder containing `package.json`:
 
-For a saved single-format placement such as Banner-only After, pass `getFormat: () => "banner"` to `createPublisherAds` along with the matching same-origin placement endpoint. The package forwards that choice to the hosted renderer; the server still enforces the saved project and format. Omit `getFormat` when the saved placement intentionally lets Wavebird choose among supported formats.
+   ```sh
+   npm install @wavebirdai/api@0.1.0-beta.12
+   ```
 
-## Next.js route generator
+3. **Save the Server ENV.** Add the values from Dashboard to your server environment. Keep `WAVEBIRD_SECRET_KEY` and `WAVEBIRD_PREFERENCE_SECRET` out of browser code and Git.
+4. **Connect the backend and frontend code.** Follow Dashboard's generated files to connect your app session, durable turn storage, model stream and ad slot. Keep the saved formats, sizes and timing.
+5. **Run your first Test ad.** Confirm that the ad appears and the request is recorded in Test Logs. Check that generation still works with declined consent, no available ad and Stop.
 
-After installing the package, run one of these commands in an existing Next.js App Router project:
+Test ads are nonpayable. Complete the [Live prerequisites](https://wavebird.ai/api/guides/going-live) before requesting Live activation.
 
-```sh
-./node_modules/.bin/wavebird-next init --lang js --root . --app-dir app
-./node_modules/.bin/wavebird-next init --lang ts --root . --app-dir src/app
-```
+For Next.js, you can use the [generator](docs/web/nextjs.md) instead of copying Dashboard's route files.
 
-Choose one language and the actual App Router directory. The command refuses to overwrite existing files. It installs `lib/publisher`, `lib/auth`, and a fail-closed `lib/model`; required `app/api/generate`, `app/api/sponsor-slot`, and `app/api/sponsor-consent` route files; `components/WavebirdPlacement`; and `WAVEBIRD-SETUP.md`. The `src/app` option puts `lib` and `components` under `src/`. These routes are application files produced by the generator, not implicit package exports. A complete standalone JS or TS Next.js example is also included in the package's `examples/` directory.
+## Connect your model output
 
-Set the server-only environment variables, including `WAVEBIRD_PUBLIC_ORIGINS` with the exact public origins saved for your app, insert actual saved Dashboard settings in `lib/publisher`, connect your real session check in `lib/auth`, and connect your existing model stream in `lib/model`. The supplied auth hook fails closed without its publisher-owned check path, and the generated model hook throws until replaced. The generated client component requires authenticated user and conversation IDs from the publisher. Mount it by the existing result area and call its returned ads object's `connectGeneration` around the existing request/stream consumer. The generated setup file shows the short entry point. Use your real consent lifecycle: the template selects Wavebird's consent dialog, while an `own_cmp` saved project must be wired to the publisher's actual CMP before any served test.
+Use `@wavebirdai/api/server` on the server and `@wavebirdai/api/browser` for the ad slot. Your response consumer must display the model output and finish only after the result is visible.
 
-## Server and browser boundary
+[JavaScript and TypeScript examples](docs/web/generation.md) | [Server and browser reference](docs/web/reference.md)
 
-`@wavebirdai/api/server` exports `createPublisherServer`. Configure it with server-only Project ID, Server Test or Live Key, preference signing secret, the publisher's real request authorization function, exact `publicOrigins`, and the saved project/placement values shown in the dashboard. The origin list is required. The package compares the browser Origin with a configured public origin whose host matches the route Host, even when Next.js or a proxy gives the route an internal URL. `localhost` and `127.0.0.1` are separate origins, and each port and scheme must match exactly; HTTP is accepted only for loopback. It returns authenticated `placementPOST`, `consentGET`, `consentPOST`, and `withGeneration` handlers, plus the server-only `reportGeneration(jobId, event)` method. The helper constructs the existing `/v1/placements`, `/v1/consent`, and `/v1/jobs/{id}/generation/{event}` requests; it does not introduce a new Wavebird protocol or accept browser-supplied format or publisher overrides. The Wavebird API remains authoritative for saved scope, creative formats, duration, fallback, and financial classification.
+## Update an existing integration
 
-Create the server helper when a request arrives, as the included Next.js examples do. This lets Next.js build a publisher app without loading its server-only Test key into the build process; the helper still validates configuration before handling traffic.
+Keep your installed version until you choose to upgrade. Follow the [migration guide](https://wavebird.ai/api/reference/versioning) and check the affected integration before deployment. The older `wavebird` npm package uses a different integration path.
 
-`withGeneration({ request, run, onLifecycle })` accepts an optional server-side observer. It receives `{ type, sessionId, generationId }` for `started` and one terminal state: `done`, `error`, or `abort`. Use it to forward lifecycle events to your own generation reporter; observer failures do not change the model response. It runs only for authenticated, same-origin requests with valid generation transport IDs. The callback is not awaited, and it receives no prompt or model bytes.
-
-Call `reportGeneration` only from trusted server code with a job ID returned by an authorized placement. Its events are `started`, `finished`, and `failed`. The server key scopes the request at Wavebird; invalid IDs or events are rejected locally, and each report has a five-second deadline and a parallel request limit. Reporting errors reject the returned promise so the caller can handle them outside the model response path.
-
-`@wavebirdai/api/browser` exports the existing tested `createPublisherAds` and `connectPublisherGeneration` lifecycle helper. It loads the hosted renderer and attaches only to a reserved container selected by the publisher. Initialize it with the current app user and conversation IDs; pass optional same-origin `placementEndpoint` and `consentEndpoint` paths when using the server routes in this package. The helper forwards those paths to the hosted renderer. Keep the Server Key and preference signing secret in the server configuration; never pass them as browser options. Use the real Wavebird consent dialog or the publisher's actual CMP. Consent on an idle page does not request an ad. For `during`, the helper displays only during an active generation. Its generation request and response stream run without waiting for consent synchronization, the ad response, or renderer readiness. It clears late responses on completion, error, abort, conversation change, GPC, or withdrawal.
-
-## Next.js
-
-The package contains equivalent runnable JavaScript and TypeScript Next.js examples in `examples/next-js` and `examples/next-ts`. Each shows a publisher-owned reserved slot outside the input and scrolling transcript, same-origin consent and placement routes, the server-only configuration, and an existing generation stream wrapped by `withGeneration`. Their authorization hook fails closed until connected to the publisher's actual session validation. The sample generation stream is a local demonstration and is meant to be replaced by the publisher's existing model call.
-
-The required server-only values are `WAVEBIRD_CLIENT_ID`, `WAVEBIRD_SECRET_KEY`, `WAVEBIRD_PREFERENCE_SECRET`, and `WAVEBIRD_PUBLIC_ORIGINS`. Keep secrets outside browser bundles and source control. Set project surface, placement, job type, timing, formats, locale, consent profile, identity/domain, and ad-space dimensions from the saved dashboard configuration. Do not shrink the reserve below the saved creative envelope plus the 256px Banner/Native control space. The publisher positions the section in its own UI.
-
-## Test scope
-
-The browser and generation transport sources are included in this repository so the package builds without the dashboard repository. The server route wrapper is tested locally against the existing REST request shape and security boundaries. Browser and deployment acceptance still depend on normal QA and the final publisher onboarding gates. Test traffic must remain nonpayable; no npm publication or Live activation is part of this package preparation.
+[Configuration](https://wavebird.ai/api/configuration) | [REST reference](https://wavebird.ai/api/reference/endpoints) | [Report an issue](https://github.com/wavebird-ai/api/issues)

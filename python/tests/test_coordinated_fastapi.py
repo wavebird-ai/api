@@ -1,0 +1,169 @@
+"""Exercise the package-owned FastAPI lifecycle against a synthetic publisher."""
+
+import asyncio
+import json
+import threading
+import unittest
+
+from fastapi import Request
+from fastapi.responses import Response
+
+from wavebird_publisher import PublisherConfig, PublisherResponse, PublisherServer
+from wavebird_publisher.fastapi import create_app
+
+
+ORIGIN = "https://publisher.example"
+
+
+async def call(app, path: str, body: dict | None = None, *, session: str = "valid",
+               origin: str = ORIGIN, cookie: str = "", include_headers: bool = False):
+    raw = json.dumps(body).encode() if body is not None else b""
+    events = []
+    delivered = False
+
+    async def receive():
+        nonlocal delivered
+        if delivered:
+            return {"type": "http.disconnect"}
+        delivered = True
+        return {"type": "http.request", "body": raw, "more_body": False}
+
+    async def send(event):
+        events.append(event)
+
+    scope = {
+        "type": "http", "asgi": {"version": "3.0", "spec_version": "2.3"}, "http_version": "1.1",
+        "method": "GET" if body is None else "POST", "scheme": "https", "path": path,
+        "raw_path": path.encode(), "query_string": b"", "root_path": "",
+        "server": ("publisher.example", 443), "client": ("127.0.0.1", 1),
+        "headers": [(b"host", b"publisher.example"), (b"origin", origin.encode()),
+                    (b"sec-fetch-site", b"same-origin"), (b"x-publisher-session", session.encode()),
+                    (b"cookie", cookie.encode())],
+    }
+    await asyncio.wait_for(app(scope, receive, send), timeout=3)
+    status = next(event["status"] for event in events if event["type"] == "http.response.start")
+    content = b"".join(event.get("body", b"") for event in events if event["type"] == "http.response.body")
+    if include_headers:
+        headers = dict(next(event["headers"] for event in events if event["type"] == "http.response.start"))
+        return status, content, headers
+    return status, content
+
+
+class CoordinatedFastApiTests(unittest.TestCase):
+    def test_actual_cookie_producer_and_authenticated_restore_route(self):
+        current = 4
+        def transport(url, body, key, timeout):
+            nonlocal current
+            payload = json.loads(body)
+            current = payload.get("revision", current + 1)
+            return PublisherResponse(200, {}, json.dumps({"authoritative_consent": {
+                "lifecycle_state": payload["lifecycle_state"], "revision": current,
+                "expires_at_ms": 9999999999999,
+            }}).encode())
+
+        config = PublisherConfig(
+            client_id="wbproj_synthetic", server_test_key="sk_test_synthetic_server_only",
+            preference_secret="synthetic-preference-secret-32-bytes", public_origins=(ORIGIN,),
+            surface_id="assistant", placement_key="default", job_type="chat", locale="en-US",
+            timing="after", consent_mode="wavebird_consent", publisher_name="Synthetic",
+            publisher_domain="publisher.example", allowed_formats=("banner",),
+            allowed_sizes=((320, 50),), position_hint="between",
+            authorize=lambda request: request.header("x-publisher-session") == "valid",
+        )
+        app = create_app(PublisherServer(config, transport),
+                         lambda request: "server-session" if request.header("x-publisher-session") == "valid" else None,
+                         lambda request: Response("model"))
+
+        async def scenario():
+            status, body, headers = await call(app, "/api/wavebird/consent",
+                                               {"session_id": "server-session", "lifecycle_state": "granted",
+                                                "remember_for_30_days": True}, include_headers=True)
+            self.assertEqual(status, 200)
+            self.assertEqual(json.loads(body)["authoritative_consent"]["revision"], 5)
+            cookie = headers[b"set-cookie"].decode().split(";", 1)[0]
+            self.assertEqual((await call(app, "/api/wavebird/consent", cookie=cookie, session=""))[0], 401)
+            status, body = await call(app, "/api/wavebird/consent", cookie=cookie)
+            self.assertEqual(status, 200)
+            self.assertEqual(json.loads(body)["preference"]["revision"], 5)
+            status, _, _ = await call(app, "/api/wavebird/consent",
+                                      {"session_id": "server-session", "lifecycle_state": "granted",
+                                       "revision": 6, "remember_for_30_days": False},
+                                      cookie=cookie, include_headers=True)
+            self.assertEqual(status, 200)
+            self.assertEqual(current, 6)
+        asyncio.run(scenario())
+
+    def test_all_formats_one_turn_and_trusted_reports(self):
+        calls = []
+        generated = []
+        report_gate = threading.Event()
+
+        def transport(url, body, key, timeout):
+            if "/generation/" in url:
+                report_gate.wait(2)
+            calls.append((url, json.loads(body), key, timeout))
+            if "/placements" in url:
+                return PublisherResponse(200, {}, b'{"job_id":"job_synthetic","decision":{"fill":false}}')
+            if url.endswith("/consent"):
+                return PublisherResponse(200, {}, json.dumps({"authoritative_consent": {
+                    "lifecycle_state": calls[-1][1]["lifecycle_state"],
+                    "revision": calls[-1][1]["revision"],
+                    "expires_at_ms": 9999999999999,
+                }}).encode())
+            return PublisherResponse(200, {}, b"{}")
+
+        def session_id_for_request(request):
+            return "server-session" if request.header("x-publisher-session") == "valid" else None
+
+        async def existing_generation(request: Request):
+            generated.append(request.method)
+            return Response("model result", media_type="text/plain")
+
+        config = PublisherConfig(
+            client_id="wbproj_synthetic", server_test_key="sk_test_synthetic_server_only",
+            preference_secret="synthetic-preference-secret-32-bytes", public_origins=(ORIGIN,),
+            surface_id="assistant", placement_key="default", job_type="chat", locale="en-US",
+            timing="during", consent_mode="wavebird_consent", publisher_name="Synthetic",
+            publisher_domain="publisher.example", allowed_formats=("banner", "native", "clip"),
+            allowed_sizes=((320, 50), (300, 250), (640, 360)), position_hint="between",
+            max_width=640, max_height=360,
+            authorize=lambda request: session_id_for_request(request) is not None,
+        )
+        app = create_app(PublisherServer(config, transport), session_id_for_request, existing_generation)
+        identity = {"session_id": "server-session", "turn_id": "turn_synthetic"}
+
+        async def scenario():
+            self.assertEqual((await call(app, "/api/wavebird/generate", identity, session=""))[0], 401)
+            self.assertEqual((await call(app, "/api/wavebird/placement", identity, origin="https://foreign.example"))[0], 403)
+            self.assertEqual((await call(app, "/api/wavebird/consent", {"session_id": "browser_forged", "lifecycle_state": "granted", "revision": 1}))[0], 401)
+            self.assertEqual(len(calls), 0, "forged consent session must never reach the API")
+            self.assertEqual((await call(app, "/api/wavebird/consent", {"session_id": "server-session", "lifecycle_state": "granted", "revision": 1}))[0], 200)
+            placement = await call(app, "/api/wavebird/placement", {**identity, "allowed_formats": ["native"]})
+            self.assertEqual(placement[0], 200)
+            self.assertEqual((await call(app, "/api/wavebird/placement", identity))[0], 409)
+            try:
+                self.assertEqual(
+                    await asyncio.wait_for(call(app, "/api/wavebird/generate", identity), timeout=0.8),
+                    (200, b"model result"),
+                    "report delivery must not delay the publisher model",
+                )
+            finally:
+                report_gate.set()
+            self.assertEqual((await call(app, "/api/wavebird/generate", identity))[0], 409)
+            self.assertEqual((await call(app, "/api/wavebird/browser.js"))[0], 200)
+            for _ in range(100):
+                if len([item for item in calls if "/generation/" in item[0]]) == 2:
+                    break
+                await asyncio.sleep(0.01)
+
+        asyncio.run(scenario())
+        self.assertEqual(generated, ["POST"])
+        placement_calls = [item for item in calls if "/placements" in item[0]]
+        self.assertEqual(len(placement_calls), 1)
+        self.assertEqual(placement_calls[0][1]["overrides"]["allowed_formats"], ["banner", "native", "clip"])
+        self.assertEqual([url.rsplit("/", 1)[-1] for url, _, _, _ in calls if "/generation/" in url],
+                         ["started", "finished"])
+
+
+if __name__ == "__main__":
+    unittest.main()

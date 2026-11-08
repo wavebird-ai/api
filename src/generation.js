@@ -1,3 +1,5 @@
+import { Buffer } from "node:buffer";
+
 function generationTransport({ request, run }) {
     const sessionId = request.headers.get("x-wavebird-session-id") || "";
     const generationId = request.headers.get("x-wavebird-generation-id") || "";

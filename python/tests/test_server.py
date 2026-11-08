@@ -1,0 +1,429 @@
+import json
+import unittest
+from email.message import Message
+from io import BytesIO
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import replace
+from threading import Event, Lock
+from unittest.mock import patch
+from urllib.error import HTTPError
+
+from wavebird_publisher import PublisherConfig, PublisherRequest, PublisherResponse, PublisherServer
+from wavebird_publisher.server import default_transport
+
+
+def config(origin="https://publisher-one.example", client="wbproj_one"):
+    return PublisherConfig(
+        client_id=client, server_test_key="sk_test_example_server_only", preference_secret="0123456789abcdef0123456789abcdef",
+        public_origins=(origin,), surface_id="assistant", placement_key="default", job_type="chat", locale="en-US",
+        timing="during", consent_mode="wavebird_consent", publisher_name="Example", publisher_domain=origin.split("//")[1],
+        allowed_formats=("banner",), allowed_sizes=((320, 50),), position_hint="between", max_width=320, max_height=50,
+        authorize=lambda req: req.header("x-publisher-session") == "valid", api_base_url="https://api.wavebird.ai",
+    )
+
+
+def request(origin, body=None, headers=None, method="POST"):
+    return PublisherRequest(f"{origin}/api/sponsor-slot", method, {
+        "Host": origin.split("//")[1], "Origin": origin, "Sec-Fetch-Site": "same-origin", "X-Publisher-Session": "valid", **(headers or {})
+    }, json.dumps(body or {}).encode())
+
+
+class ServerTests(unittest.TestCase):
+    def test_api_base_url_accepts_https_environments_and_rejects_disguised_destinations(self):
+        for value in ("https://api.wavebird.ai", "https://api.wavebird.ai/v1", "https://qa-api.example:8443/base/"):
+            with self.subTest(positive=value):
+                replace(config(), api_base_url=value)
+        for value in (None, False, 0, "", "http://api.wavebird.ai", "https://api.wavebird.ai@other.example",
+                      "https://api.wavebird.ai?tenant=other", "https://api.wavebird.ai#other",
+                      "https://api.wavebird.ai\\@other.example", "https://api.wavebird.ai:bad"):
+            with self.subTest(negative=value), self.assertRaisesRegex(ValueError, "publisher_api_https_required"):
+                replace(config(), api_base_url=value)
+
+    def test_default_transport_keeps_only_safe_response_headers_on_success_and_error(self):
+        headers = Message()
+        headers["Content-Type"] = "application/json"
+        headers["X-Request-Id"] = "req_transport"
+        headers["X-Unsafe"] = "private"
+
+        class Reply(BytesIO):
+            status = 200
+            def __init__(self):
+                super().__init__(b"{}")
+                self.headers = headers
+
+        class Opener:
+            def __init__(self, result):
+                self.result = result
+            def open(self, *_args, **_kwargs):
+                return self.result
+
+        with patch("wavebird_publisher.server.build_opener", return_value=Opener(Reply())):
+            success = default_transport("https://api.wavebird.ai/v1/placements", b"{}", "sk_test_example", 5)
+        with patch("wavebird_publisher.server.build_opener", return_value=Opener(
+            HTTPError("https://api.wavebird.ai/v1/placements", 409, "conflict", headers, BytesIO(b"{}")))):
+            error = default_transport("https://api.wavebird.ai/v1/placements", b"{}", "sk_test_example", 5)
+        for response, status in ((success, 200), (error, 409)):
+            self.assertEqual(response.status, status)
+            self.assertEqual(response.headers.get("x-request-id"), "req_transport")
+            self.assertNotIn("X-Unsafe", response.headers)
+
+    def test_placement_relays_request_id_without_other_upstream_headers(self):
+        origin = "https://publisher-one.example"
+        for upstream_headers, expected in (
+            ({"Content-Type": "application/json", "x-request-id": "req_probe", "X-Unsafe": "private"}, "req_probe"),
+            ({"Content-Type": "application/json", "X-Unsafe": "private"}, None),
+        ):
+            with self.subTest(request_id=expected):
+                server = PublisherServer(config(), lambda *_: PublisherResponse(
+                    200, upstream_headers, b'{"decision":{"fill":false},"placement":null}'))
+                response = server.placement_post(request(origin, {"session_id": "s"}))
+                self.assertEqual(response.status, 200)
+                self.assertEqual(response.headers.get("x-request-id"), expected)
+                self.assertNotIn("X-Unsafe", response.headers)
+
+    def test_required_server_identity_rejects_wrong_types_and_empty_values(self):
+        for override in (
+            {"server_test_key": 42},
+            {"server_test_key": "", "server_key": 42},
+            {"preference_secret": 42},
+            {"publisher_name": ""},
+            {"publisher_name": "  "},
+            {"publisher_domain": ""},
+            {"publisher_domain": "  "},
+        ):
+            with self.subTest(override=tuple(override)):
+                with self.assertRaisesRegex(ValueError, "publisher_(?:server_key|security_config|identity)_invalid"):
+                    replace(config(), **override)
+
+    def test_locale_requires_nonempty_string(self):
+        for value in ("", None, 0, False):
+            with self.subTest(value=value), self.assertRaisesRegex(ValueError, "publisher_job_invalid"):
+                replace(config(), locale=value)
+
+    def test_project_and_placement_identifiers_require_strings(self):
+        for field, value, error in (("client_id", 42, "publisher_project_invalid"),
+                                    ("surface_id", 42, "publisher_placement_invalid"),
+                                    ("placement_key", 42, "publisher_placement_invalid")):
+            with self.subTest(field=field), self.assertRaisesRegex(ValueError, error):
+                replace(config(), **{field: value})
+
+    def test_saved_sizes_provide_responsive_envelope_without_numeric_caps(self):
+        values = config().__dict__.copy()
+        values.pop("max_width")
+        values.pop("max_height")
+        values["responsive_size_selection"] = True
+        cfg = PublisherConfig(**values)
+        calls = []
+
+        def transport(url, body, key, timeout):
+            calls.append(json.loads(body))
+            return PublisherResponse(200, {}, b'{"decision":{"fill":false}}')
+
+        response = PublisherServer(cfg, transport).placement_post(request(
+            "https://publisher-one.example", {"session_id": "s", "container_size": {"width": 320, "height": 50}}))
+        self.assertEqual(response.status, 200)
+        self.assertEqual(calls[0]["slot_hint"]["max_width"], 320)
+        self.assertEqual(calls[0]["slot_hint"]["max_height"], 50)
+
+    def test_advanced_cap_below_saved_size_returns_no_fit(self):
+        cfg = replace(config(), max_width=300, responsive_size_selection=True)
+        response = PublisherServer(cfg, lambda *_: self.fail("no upstream on no-fit")).placement_post(request(
+            "https://publisher-one.example", {"session_id": "s", "container_size": {"width": 320, "height": 50}}))
+        self.assertEqual(response.json()["decision"]["reason"], "no_fit")
+        invalid = PublisherServer(cfg, lambda *_: self.fail("no upstream on invalid size")).placement_post(request(
+            "https://publisher-one.example", {"session_id": "s", "container_size": {"width": 0, "height": 50}}))
+        self.assertEqual(invalid.status, 400)
+
+    def test_invalid_advanced_caps_fail_closed(self):
+        for width in (False, 0, -1, "320"):
+            with self.subTest(width=width), self.assertRaisesRegex(ValueError, "publisher_envelope_invalid"):
+                replace(config(), max_width=width)
+
+    def test_opt_in_responsive_selection_uses_saved_format_sizes_and_no_fit_skips_upstream(self):
+        calls = []
+        cfg = replace(config(), allowed_formats=("banner", "native", "clip"),
+                      allowed_sizes=((728, 90), (320, 50), (300, 250), (640, 360)),
+                      size_formats=((728, 90, ("banner",)), (320, 50, ("banner",)),
+                                    (300, 250, ("native",)), (640, 360, ("clip",))),
+                      max_width=728, max_height=360, responsive_size_selection=True)
+
+        def transport(url, body, key, timeout):
+            calls.append(json.loads(body))
+            return PublisherResponse(200, {}, b'{"decision":{"fill":false}}')
+
+        server = PublisherServer(cfg, transport)
+        origin = "https://publisher-one.example"
+        for width, height, fmt, expected_size, expected_format in (
+            (728, 360, "banner", (728, 90), "banner"),
+            (390, 250, "auto", (320, 50), "banner"),
+            (320, 250, "native", (300, 250), "native"),
+            (640, 360, "clip", (640, 360), "clip"),
+        ):
+            response = server.placement_post(request(origin, {"session_id": "s", "format": fmt,
+                                                     "container_size": {"width": width, "height": height}}))
+            self.assertEqual(response.status, 200)
+            self.assertEqual(calls[-1]["slot_hint"]["allowed_sizes"], [{"width": expected_size[0], "height": expected_size[1]}])
+            self.assertEqual(calls[-1]["overrides"]["allowed_formats"], [expected_format])
+            self.assertLessEqual(calls[-1]["slot_hint"]["max_width"], width)
+            self.assertLessEqual(calls[-1]["slot_hint"]["max_height"], height)
+        self.assertEqual(len(calls), 4)
+        no_fit = server.placement_post(request(origin, {"session_id": "s", "container_size": {"width": 290, "height": 250}}))
+        self.assertEqual(no_fit.json(), {"decision": {"fill": False, "reason": "no_fit"}, "placement": None})
+        self.assertEqual(server.placement_post(request(origin, {"session_id": "s", "format": "native",
+                                                       "container_size": {"width": 320, "height": 90}})).json()["decision"]["reason"], "no_fit")
+        for bounds in ({"width": 0, "height": 250}, {"width": True, "height": 250}, None):
+            self.assertEqual(server.placement_post(request(origin, {"session_id": "s", "container_size": bounds})).status, 400)
+        self.assertEqual(server.placement_post(request(origin, {"session_id": "s", "format": "unknown",
+                                                       "container_size": {"width": 728, "height": 360}})).status, 400)
+        self.assertEqual(len(calls), 4)
+
+    def test_three_formats_share_saved_scope_and_unknown_format_fails(self):
+        calls = []
+        cfg = replace(config(), allowed_formats=("banner", "native", "clip"), timing="after",
+                      allowed_sizes=((320, 50), (300, 250), (640, 360)), max_width=640, max_height=360)
+
+        def transport(url, body, key, timeout):
+            calls.append(json.loads(body))
+            return PublisherResponse(200, {}, b'{"decision":{"fill":false}}')
+
+        response = PublisherServer(cfg, transport).placement_post(
+            request("https://publisher-one.example", {"session_id": "s", "allowed_formats": ["native"]}))
+        self.assertEqual(response.status, 200)
+        self.assertEqual(calls[0]["overrides"]["allowed_formats"], ["banner", "native", "clip"])
+        self.assertEqual(calls[0]["overrides"]["timing"], "after")
+        self.assertEqual(calls[0]["slot_hint"]["allowed_sizes"], [
+            {"width": 320, "height": 50}, {"width": 300, "height": 250}, {"width": 640, "height": 360}])
+        with self.assertRaisesRegex(ValueError, "publisher_formats_invalid"):
+            replace(cfg, allowed_formats=("unknown",))
+
+    def test_two_publishers_use_only_their_saved_scope(self):
+        for origin, client in (("https://publisher-one.example", "wbproj_one"), ("https://publisher-two.example", "wbproj_two")):
+            calls = []
+            def transport(url, body, key, timeout):
+                calls.append((url, json.loads(body), key, timeout))
+                return PublisherResponse(200, {"Content-Type": "application/json"}, b'{"decision":{"fill":false}}')
+            server = PublisherServer(config(origin, client), transport)
+            result = server.placement_post(request(origin, {"session_id": "own_session", "allowed_formats": ["native"], "client_id": "wbproj_foreign"}))
+            self.assertEqual(result.status, 200)
+            self.assertEqual(len(calls), 1)
+            self.assertEqual(calls[0][1]["client_id"], client)
+            self.assertEqual(calls[0][1]["overrides"]["allowed_formats"], ["banner"])
+            self.assertEqual(calls[0][1]["slot_hint"]["allowed_sizes"], [{"width": 320, "height": 50}])
+            self.assertEqual(calls[0][2], "sk_test_example_server_only")
+            self.assertEqual(calls[0][3], 5)
+
+    def test_deny_by_default_origin_session_gpc_and_input(self):
+        calls = []
+        server = PublisherServer(config(), lambda *args: calls.append(args))
+        origin = "https://publisher-one.example"
+        self.assertEqual(server.placement_post(request(origin, {"session_id": "s"}, {"X-Publisher-Session": ""})).status, 401)
+        self.assertEqual(server.placement_post(request(origin, {"session_id": "s"}, {"Origin": "https://foreign.example"})).status, 403)
+        self.assertEqual(server.placement_post(request(origin, {"session_id": "s"}, {"Sec-GPC": "1"})).status, 403)
+        self.assertEqual(server.placement_post(request(origin, {})).status, 400)
+        self.assertEqual(calls, [])
+
+    def test_consent_refusal_and_signed_preference(self):
+        origin = "https://publisher-one.example"
+        calls = []
+        def transport(url, body, key, timeout):
+            calls.append((url, json.loads(body)))
+            if url.endswith("/consent"):
+                state = calls[-1][1]["lifecycle_state"]
+                return PublisherResponse(200, {"Content-Type": "application/json"}, json.dumps({"authoritative_consent": {"lifecycle_state": state, "revision": 1}}).encode())
+            return PublisherResponse(200, {}, b"{}")
+        server = PublisherServer(config(), transport)
+        denied = server.consent_post(request(origin, {"session_id": "s", "lifecycle_state": "denied", "revision": 1, "remember_for_30_days": True}))
+        self.assertEqual(denied.status, 200)
+        self.assertEqual(calls[-1][1]["purposes"], {"semantic_targeting": False, "session_persistence": False, "cross_session_persistence": False, "prompt_shared": False})
+        cookie = denied.headers["Set-Cookie"].split(";", 1)[0]
+        restored = server.consent_get(request(origin, headers={"Cookie": cookie}, method="GET"), "s")
+        self.assertEqual(restored.json()["preference"]["state"], "denied")
+        self.assertEqual(restored.json()["preference"]["revision"], 1)
+        self.assertIsNone(server.consent_get(request(origin, headers={"Cookie": cookie + "tampered"}, method="GET"), "s").json()["preference"])
+        self.assertIsNone(server.consent_get(request(origin, headers={"Cookie": cookie, "Sec-GPC": "1"}, method="GET"), "s").json()["preference"])
+        self.assertIsNone(server.consent_get(request(origin, headers={"Cookie": cookie}, method="GET"), "another-session").json()["preference"])
+        self.assertEqual(server.consent_post(request(origin, {"session_id": "s", "lifecycle_state": "granted", "revision": 1, "tcf_string": "unsupported"})).status, 400)
+        before = len(calls)
+        self.assertEqual(server.consent_post(request(origin, {"session_id": "s", "lifecycle_state": "granted",
+                                                              "revision": 2, "remember_for_30_days": False})).status, 409)
+        self.assertEqual(len(calls), before)
+
+    def test_explicit_choice_and_reload_use_authoritative_revision_without_replay(self):
+        origin = "https://publisher-one.example"
+        stored = {"revision": 4, "state": "granted"}
+        calls = []
+
+        def transport(url, body, key, timeout):
+            self.assertTrue(url.endswith("/consent"))
+            payload = json.loads(body)
+            calls.append(payload)
+            revision = payload.get("revision", stored["revision"] + 1)
+            if revision <= stored["revision"]:
+                return PublisherResponse(409, {}, b'{"error":"consent_state_conflict"}')
+            stored.update(revision=revision, state=payload["lifecycle_state"])
+            return PublisherResponse(200, {"Content-Type": "application/json"},
+                                     json.dumps({"authoritative_consent": {
+                                         "lifecycle_state": stored["state"], "revision": revision,
+                                         "expires_at_ms": 9999999999999}}).encode())
+
+        server = PublisherServer(config(), transport)
+        # A fresh, explicit user choice uses CSL's server-side monotonic allocator.
+        choice = server.consent_post(request(origin, {"session_id": "s", "lifecycle_state": "granted",
+                                                       "remember_for_30_days": True}))
+        self.assertEqual(choice.status, 200)
+        self.assertNotIn("revision", calls[-1])
+        self.assertEqual(choice.json()["authoritative_consent"]["revision"], 5)
+        cookie = choice.headers["Set-Cookie"].split(";", 1)[0]
+        preference = server.consent_get(request(origin, headers={"Cookie": cookie}, method="GET"), "s").json()["preference"]
+        self.assertEqual(preference["revision"], 5)
+
+        # Automatic restoration submits exactly the next signed revision.
+        restored = server.consent_post(request(origin, {"session_id": "s", "lifecycle_state": "granted",
+                                                         "revision": 6, "remember_for_30_days": False},
+                                               {"Cookie": cookie}))
+        self.assertEqual(restored.status, 200)
+        self.assertEqual(calls[-1]["revision"], 6)
+        renewed_cookie = restored.headers["Set-Cookie"].split(";", 1)[0]
+        renewed = server.consent_get(request(origin, headers={"Cookie": renewed_cookie}, method="GET"), "s").json()["preference"]
+        self.assertEqual(renewed["revision"], 6)
+        self.assertEqual(renewed["expires_at"], preference["expires_at"], "reload must not extend retention")
+
+        prior_calls = len(calls)
+        stale = server.consent_post(request(origin, {"session_id": "s", "lifecycle_state": "granted",
+                                                      "revision": 6, "remember_for_30_days": False},
+                                            {"Cookie": cookie}))
+        self.assertEqual(stale.status, 409)
+        self.assertEqual(len(calls), prior_calls + 1, "CSL must reject a stale but correctly signed revision")
+        prior_calls = len(calls)
+        tampered = server.consent_post(request(origin, {"session_id": "s", "lifecycle_state": "granted",
+                                                         "revision": 7, "remember_for_30_days": False},
+                                               {"Cookie": renewed_cookie + "tampered"}))
+        self.assertEqual(tampered.status, 409)
+        self.assertEqual(len(calls), prior_calls)
+        self.assertIsNone(server.consent_get(request(origin, headers={"Cookie": cookie}, method="GET"), "other-session").json()["preference"])
+        self.assertEqual(server.consent_post(request(origin, {"session_id": "s", "lifecycle_state": "granted",
+                                                                "revision": 7, "remember_for_30_days": False},
+                                                      {"Cookie": renewed_cookie, "Origin": "https://foreign.example"})).status, 403)
+        self.assertEqual(len(calls), prior_calls)
+
+    def test_invalid_authoritative_snapshot_never_creates_preference(self):
+        origin = "https://publisher-one.example"
+        server = PublisherServer(config(), lambda *_: PublisherResponse(
+            200, {}, b'{"authoritative_consent":{"lifecycle_state":"granted","revision":0}}'))
+        response = server.consent_post(request(origin, {"session_id": "s", "lifecycle_state": "granted",
+                                                         "remember_for_30_days": True}))
+        self.assertEqual(response.status, 502)
+        self.assertIn("Max-Age=0", response.headers["Set-Cookie"])
+
+    def test_no_fill_timeout_report_and_generation_guard(self):
+        origin = "https://publisher-one.example"
+        server = PublisherServer(config(), lambda *args: PublisherResponse(200, {}, b'{"decision":{"fill":false}}'))
+        self.assertFalse(server.placement_post(request(origin, {"session_id": "s"})).json()["decision"]["fill"])
+        self.assertIsNone(server.authorize_generation(request(origin)))
+        self.assertIsNone(server.authorize_generation(request(origin, headers={"Sec-GPC": "1"})))
+        self.assertEqual(server.authorize_generation(request(origin, headers={"X-Publisher-Session": ""})).status, 401)
+        self.assertEqual(server.report_generation("job_test", "finished").status, 200)
+        with self.assertRaises(ValueError):
+            server.report_generation("foreign", "finished")
+        timed = PublisherServer(config(), lambda *args: (_ for _ in ()).throw(TimeoutError()))
+        self.assertEqual(timed.placement_post(request(origin, {"session_id": "s"})).status, 502)
+
+    def test_upstream_capacity_fails_fast_and_recovers(self):
+        origin = "https://publisher-one.example"
+        release = Event()
+        two_started = Event()
+        lock = Lock()
+        active = 0
+
+        def transport(url, body, key, timeout):
+            nonlocal active
+            with lock:
+                active += 1
+                if active == 2:
+                    two_started.set()
+            release.wait(2)
+            return PublisherResponse(200, {}, b'{"decision":{"fill":false}}')
+
+        server = PublisherServer(config(), transport)
+        with ThreadPoolExecutor(max_workers=2) as workers:
+            first = workers.submit(server.placement_post, request(origin, {"session_id": "first"}))
+            second = workers.submit(server.placement_post, request(origin, {"session_id": "second"}))
+            try:
+                self.assertTrue(two_started.wait(1))
+                limited = server.placement_post(request(origin, {"session_id": "third"}))
+                self.assertEqual(limited.status, 429)
+                self.assertEqual(limited.json()["error"], "wavebird_capacity_exceeded")
+            finally:
+                release.set()
+            self.assertEqual(first.result(1).status, 200)
+            self.assertEqual(second.result(1).status, 200)
+        self.assertEqual(server.placement_post(request(origin, {"session_id": "fourth"})).status, 200)
+        self.assertEqual(active, 3)
+
+    def test_test_and_live_server_keys_share_the_package_contract(self):
+        origin = "https://publisher-one.example"
+        calls = []
+        for key in ("sk_test_synthetic", "sk_live_synthetic"):
+            cfg = replace(config(), server_test_key="", server_key=key)
+            server = PublisherServer(cfg, lambda url, body, sent_key, timeout: (
+                calls.append((url, sent_key, timeout)) or PublisherResponse(200, {}, b'{"decision":{"fill":false}}')
+            ))
+            self.assertEqual(server.placement_post(request(origin, {"session_id": "s"})).status, 200)
+            self.assertEqual(calls[-1][1], key)
+        self.assertEqual(len(calls), 2)
+        with self.assertRaisesRegex(ValueError, "publisher_server_key_invalid"):
+            replace(config(), server_test_key="", server_key="pk_publishable_wrong_scope")
+        with self.assertRaisesRegex(ValueError, "publisher_server_key_conflict"):
+            replace(config(), server_key="sk_live_other")
+
+    def test_public_origin_count_matches_shared_package_limit(self):
+        origins = tuple(f"https://h{index}.example" for index in range(9))
+        self.assertEqual(len(replace(config(), public_origins=origins[:8]).public_origins), 8)
+        with self.assertRaisesRegex(ValueError, "publisher_origins_invalid"):
+            replace(config(), public_origins=origins)
+
+    def test_nested_collection_shapes_fail_with_field_errors(self):
+        valid = config()
+        self.assertEqual(replace(valid, public_origins=["https://publisher-one.example"]).public_origins,
+                         ["https://publisher-one.example"])
+        self.assertEqual(replace(valid, allowed_formats=["banner"]).allowed_formats, ["banner"])
+        self.assertEqual(replace(valid, allowed_sizes=[[320, 50]]).allowed_sizes, [[320, 50]])
+        for value in (1, {"https://publisher-one.example": True}, (["nested"],)):
+            with self.subTest(field="public_origins", value=type(value).__name__):
+                with self.assertRaisesRegex(ValueError, "publisher_origins_invalid"):
+                    replace(valid, public_origins=value)
+        for value in (1, {"banner": True}):
+            with self.subTest(field="allowed_formats", value=type(value).__name__):
+                with self.assertRaisesRegex(ValueError, "publisher_formats_invalid"):
+                    replace(valid, allowed_formats=value)
+        for value in (1, {(320, 50): True}, (None,), ((),), ((320,),)):
+            with self.subTest(field="allowed_sizes", value=type(value).__name__):
+                with self.assertRaisesRegex(ValueError, "publisher_sizes_invalid"):
+                    replace(valid, allowed_sizes=value)
+
+    def test_job_type_is_canonical_before_any_upstream_request(self):
+        for job_type in ("chat", "code", "image", "voice", "agent"):
+            self.assertEqual(replace(config(), job_type=job_type).job_type, job_type)
+        for job_type in (None, "", "image_generation", "unsupported"):
+            with self.assertRaisesRegex(ValueError, "publisher_job_invalid"):
+                replace(config(), job_type=job_type)
+
+    def test_explicit_gdpr_flag_requires_boolean(self):
+        for gdpr_applies in (False, True):
+            self.assertIs(replace(config(), gdpr_applies=gdpr_applies).gdpr_applies, gdpr_applies)
+        for gdpr_applies in (None, 0, 1, "true"):
+            with self.assertRaisesRegex(ValueError, "publisher_gdpr_invalid"):
+                replace(config(), gdpr_applies=gdpr_applies)
+
+    def test_wildcard_origin_rejected(self):
+        with self.assertRaisesRegex(ValueError, "publisher_origins_invalid"):
+            PublisherConfig(**{**config().__dict__, "public_origins": ("http://localhost:*",)})
+        with self.assertRaisesRegex(ValueError, "publisher_origins_invalid"):
+            replace(config(), server_test_key="", server_key="sk_live_synthetic",
+                    public_origins=("http://localhost:4173",))
+        self.assertEqual(replace(config(), public_origins=("http://localhost:4173",)).public_origins,
+                         ("http://localhost:4173",))
+
+
+if __name__ == "__main__":
+    unittest.main()

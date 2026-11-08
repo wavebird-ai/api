@@ -7,7 +7,7 @@ Use this path instead of copying Dashboard's route files. It supports an existin
 From the folder containing `package.json`:
 
 ```sh
-npm install @wavebirdai/api@0.1.0-beta.12
+npm install @wavebirdai/api@0.1.0-beta.13
 ./node_modules/.bin/wavebird-next init --lang ts --root . --app-dir src/app
 ```
 

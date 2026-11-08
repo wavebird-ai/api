@@ -22,7 +22,7 @@ Use Node.js 20 or later on your server.
 2. **Install the package.** Run this in your app's terminal, in the folder containing `package.json`:
 
    ```sh
-   npm install @wavebirdai/api@0.1.0-beta.12
+   npm install @wavebirdai/api@0.1.0-beta.13
    ```
 
 3. **Save the Server ENV.** Add the values from Dashboard to your server environment. Keep `WAVEBIRD_SECRET_KEY` and `WAVEBIRD_PREFERENCE_SECRET` out of browser code and Git.

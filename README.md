@@ -18,14 +18,14 @@ Native iOS and Android packages are not currently available. See [integration pa
 
 Use Node.js 20 or later on your server.
 
-1. **Open your project in Dashboard.** Choose your language and package version. Save your HTTPS app URL and approved origins. `www.example.com` and `example.com` are separate origins.
+1. **Open your project in Dashboard.** Choose your language and package version. In App settings, verify the domain using a DNS TXT record or HTTPS file, then save your HTTPS app URL and approved origins. `www.example.com` and `example.com` are separate hosts.
 2. **Install the package.** Run this in your app's terminal, in the folder containing `package.json`:
 
    ```sh
-   npm install @wavebirdai/api@0.1.0-beta.13
+   npm install @wavebirdai/api@0.1.0-beta.14
    ```
 
-3. **Save the Server ENV.** Add the values from Dashboard to your server environment. Keep `WAVEBIRD_SECRET_KEY` and `WAVEBIRD_PREFERENCE_SECRET` out of browser code and Git.
+3. **Save the Server ENV from Overview, Integration step 2.** The key-only download is not the full configuration. Keep `WAVEBIRD_SECRET_KEY` and the stable, project-specific `WAVEBIRD_PREFERENCE_SECRET` out of browser code and Git. Include the saved `WAVEBIRD_PUBLIC_ORIGINS`.
 4. **Connect the backend and frontend code.** Follow Dashboard's generated files to connect your app session, durable turn storage, model stream and ad slot. Keep the saved formats, sizes and timing.
 5. **Run your first Test ad.** Confirm that the ad appears and the request is recorded in Test Logs. Check that generation still works with declined consent, no available ad and Stop.
 

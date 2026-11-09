@@ -441,6 +441,10 @@ test("configured public origins bind proxied and local routes to exact host, sch
   assert.throws(() => createPublisherServer({ ...saved, publicOrigins: ["http://another-publisher.example"] }), /publisher_public_origins_invalid/);
   assert.throws(() => createPublisherServer({ ...saved, publicOrigins: undefined }), /publisher_public_origins_invalid/);
   assert.throws(() => createPublisherServer({ ...saved, publicOrigins: ["http://localhost:4173/"] }), /publisher_public_origins_invalid/);
+  for (const origin of ["https://*.example.test", "https://foo*bar.example", "https://*", 42, null]) {
+    assert.throws(() => createPublisherServer({ ...saved, publicOrigins: [origin] }), /publisher_public_origins_invalid/);
+  }
+  assert.doesNotThrow(() => createPublisherServer({ ...saved, publicOrigins: ["https://www.example.test:8443"] }));
 });
 
 test("existing sandbox No-Fill control is forwarded only with a Test key", async () => {

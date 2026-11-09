@@ -80,6 +80,7 @@ function normalizeOptions(options) {
   {
     if (!Array.isArray(options.publicOrigins) || options.publicOrigins.length < 1 || options.publicOrigins.length > 8) throw new Error("publisher_public_origins_invalid");
     for (const origin of options.publicOrigins) {
+      if (typeof origin !== "string" || origin.includes("*")) throw new Error("publisher_public_origins_invalid");
       let url;
       try { url = new URL(origin); } catch { throw new Error("publisher_public_origins_invalid"); }
       const loopback = url.hostname === "localhost" || url.hostname === "127.0.0.1";

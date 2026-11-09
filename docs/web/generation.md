@@ -1,6 +1,6 @@
 # Connect generation to the displayed result
 
-These are connection helpers, not complete apps. Use the same installed `@wavebirdai/api@0.1.0-beta.14` as your server routes.
+These are connection helpers, not complete apps. Use the same installed `@wavebirdai/api@0.1.0-beta.15` as your server routes.
 
 - `ads` is the instance for this surface, returned by `createPublisherAds` or the generated component's `onReady` callback.
 - `sendExistingRequest` sends your existing authenticated model request. Merge the provided headers into its headers and preserve its body and abort signal. Call the route wrapped by `withGeneration`.

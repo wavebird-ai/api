@@ -1,6 +1,6 @@
 # Web integration reference
 
-Applies to `@wavebirdai/api@0.1.0-beta.14`. [Start with the integration steps](../../README.md#set-up-javascript-or-typescript).
+Applies to `@wavebirdai/api@0.1.0-beta.15`. [Start with the integration steps](../../README.md#set-up-javascript-or-typescript).
 
 
 `@wavebirdai/api/server` exports `createPublisherServer`. Configure it with server-only Project ID, Server Test or production Key, preference signing secret, the publisher's real request authorization function, exact `publicOrigins`, and the saved project/placement values shown in the dashboard. The origin list is required. The package compares the browser Origin with a configured public origin whose host matches the route Host, even when Next.js or a proxy gives the route an internal URL. `localhost` and `127.0.0.1` are separate origins, and each port and scheme must match exactly; HTTP loopback is available only with a Server Test Key. A production key also requires its separately approved project and wavebird server authority. Omit `bidfloor` and `bidfloorCurrency` to inherit saved pricing. An explicit override supplies both a nonnegative amount, including zero, and a three-letter currency; the API validates it against the saved project. It returns authenticated `placementPOST`, `consentGET`, `consentPOST`, and `withGeneration` handlers, plus the server-only `reportGeneration(jobId, event)` method. The helper constructs the existing `/v1/placements`, `/v1/consent`, and `/v1/jobs/{id}/generation/{event}` requests; it does not introduce a new wavebird protocol. The wavebird API remains authoritative for saved scope, creative formats, duration, fallback, and financial classification.
@@ -21,6 +21,8 @@ For `after`, resolve the generation consumer only after your app presents the re
 
 
 ## Troubleshooting
+
+With the trusted-session integration, consent restoration reads the current server revision before synchronizing the saved choice. Reloading does not reset consent revisions. An unavailable revision keeps ads disabled until consent can be synchronized; it does not block the model response.
 
 - **401:** check the app session and server authorization before changing the wavebird key.
 - **Origin rejected:** compare scheme, hostname and port with the saved project and server allowlist. `www.example.com` and `example.com` are separate origins.

@@ -388,21 +388,39 @@ export function createPublisherServer(inputOptions) {
     const headers = { "Cache-Control": "no-store", Vary: "Cookie, Sec-GPC" };
     if (!validOrigin(request, options, false)) return response("invalid_origin", 403, headers);
     if (gpc(request)) return Response.json({ preference: null }, { headers });
+    const revision = {};
+    if (options.sessionIdForRequest) {
+      let sessionId;
+      try { sessionId = await journalCall(() => options.sessionIdForRequest(request)); }
+      catch { return response("publisher_session_unavailable", 503, headers); }
+      if (!ID.test(sessionId || "")) return response("publisher_session_unavailable", 401, headers);
+      try {
+        const query = new URLSearchParams({ client_id: options.clientId, session_id: sessionId });
+        const result = await consentFetch(`${options.base}/consent?${query}`, {
+          method: "GET", headers: { Authorization: `Bearer ${options.secretKey}` }, cache: "no-store"
+        });
+        const state = await result.json();
+        if (!result.ok || !Number.isSafeInteger(state.current_revision) || state.current_revision < 0 ||
+            state.current_revision >= Number.MAX_SAFE_INTEGER) throw new Error("consent_revision_unavailable");
+        revision.current_revision = state.current_revision;
+      } catch { return response("consent_revision_unavailable", 503, headers); }
+    }
+    const preferenceResponse = value => Response.json({ ...value, ...revision }, { headers });
     try {
       const value = (request.headers.get("cookie") || "").split(";").map(value => value.trim())
         .find(value => value.startsWith(cookieName + "="))?.slice(cookieName.length + 1) || "";
       if (value.length > 2048) throw new Error("preference_invalid");
       const [payload, signature, extra] = value.split(".");
-      if (!payload || !signature || extra || !/^[A-Za-z0-9_-]+$/.test(payload) || !/^[A-Za-z0-9_-]+$/.test(signature)) return Response.json({ preference: null }, { headers });
-      if (!await crypto.subtle.verify("HMAC", await preferenceKey(), Buffer.from(signature, "base64url"), new TextEncoder().encode(payload))) return Response.json({ preference: null }, { headers });
+      if (!payload || !signature || extra || !/^[A-Za-z0-9_-]+$/.test(payload) || !/^[A-Za-z0-9_-]+$/.test(signature)) return preferenceResponse({ preference: null });
+      if (!await crypto.subtle.verify("HMAC", await preferenceKey(), Buffer.from(signature, "base64url"), new TextEncoder().encode(payload))) return preferenceResponse({ preference: null });
       const record = JSON.parse(Buffer.from(payload, "base64url").toString("utf8"));
       const now = Date.now();
       if (Object.entries(scope(request)).some(([key, value]) => record[key] !== value) ||
         !["granted", "denied", "withdrawn"].includes(record.state) || !Number.isSafeInteger(record.issued_at) ||
         !Number.isSafeInteger(record.expires_at) || record.issued_at > now || record.expires_at <= now ||
-        record.expires_at - record.issued_at !== PREFERENCE_TTL * 1000) return Response.json({ preference: null }, { headers });
-      return Response.json({ preference: { state: record.state, expires_at: record.expires_at } }, { headers });
-    } catch { return Response.json({ preference: null, error: "preference_unavailable" }, { headers }); }
+        record.expires_at - record.issued_at !== PREFERENCE_TTL * 1000) return preferenceResponse({ preference: null });
+      return preferenceResponse({ preference: { state: record.state, expires_at: record.expires_at } });
+    } catch { return preferenceResponse({ preference: null, error: "preference_unavailable" }); }
   }
   async function consentPOST(request) {
     if (!await authorized(request)) return response("authentication_required", 401);

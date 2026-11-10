@@ -54,6 +54,23 @@ export function createPublisherAds(options) {
     throw new Error("publisher_format_hook_invalid");
   if (options.onDiagnostic !== undefined && typeof options.onDiagnostic !== "function")
     throw new Error("publisher_diagnostic_hook_invalid");
+  if (options.consentLocale !== undefined && (typeof options.consentLocale !== "string" ||
+      !/^(?:auto|[a-z]{2,3}(?:-[a-z0-9]{2,8})*)$/i.test(options.consentLocale)))
+    throw new Error("publisher_consent_locale_invalid");
+  const consentTheme = options.consentTheme === undefined ? undefined : options.consentTheme;
+  if (consentTheme !== undefined) {
+    const validators = {
+      accentColor: value => typeof value === "string" && /^#[\da-f]{6}$/i.test(value),
+      backgroundColor: value => typeof value === "string" && /^#[\da-f]{6}$/i.test(value),
+      textColor: value => typeof value === "string" && /^#[\da-f]{6}$/i.test(value),
+      fontFamily: value => typeof value === "string" && /^[a-z0-9 ,"'\-]{1,160}$/i.test(value),
+      radius: value => typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= 20,
+      spacing: value => typeof value === "number" && Number.isFinite(value) && value >= 12 && value <= 32,
+    };
+    if (!consentTheme || typeof consentTheme !== "object" || Array.isArray(consentTheme) ||
+        Object.entries(consentTheme).some(([key, value]) => !Object.hasOwn(validators, key) || !validators[key](value)))
+      throw new Error("publisher_consent_theme_invalid");
+  }
   let privacyTarget = null;
   if (consentMode === "wavebird_consent" && options.privacySettingsTarget !== undefined) {
     if (typeof options.privacySettingsTarget !== "string" || !options.privacySettingsTarget.trim())
@@ -148,6 +165,8 @@ export function createPublisherAds(options) {
     sponsor = window.wavebird.createChatSponsor({ target: slot, ...binding,
       clientId: options.clientId, surfaceId: options.surfaceId, jobType: options.jobType, timing, consentMode,
       cleanupAfterClip: true,
+      ...(options.consentLocale === undefined ? {} : { consentLocale: options.consentLocale }),
+      ...(consentTheme === undefined ? {} : { consentTheme: { ...consentTheme } }),
       ...(turnBinding ? { turnBinding: true } : {}),
       ...(options.getFormat === undefined ? {} : { getFormat: options.getFormat }),
       ...(options.placementEndpoint === undefined ? {} : { placementEndpoint: options.placementEndpoint }),

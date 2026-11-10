@@ -17,6 +17,18 @@ export type PublisherAds<Bound extends boolean = boolean> = {
   deny(): Promise<unknown>;
   withdraw(): Promise<unknown>;
 };
+export type PublisherConsentTheme = {
+  /** Six-digit hex colors. Insufficient contrast falls back to readable colors. */
+  accentColor?: string;
+  backgroundColor?: string;
+  textColor?: string;
+  /** Font family names only, without CSS rules or URLs. No font is downloaded. */
+  fontFamily?: string;
+  /** Corner radius in pixels, 0–20. */
+  radius?: number;
+  /** Card padding in pixels, 12–32. */
+  spacing?: number;
+};
 type PublisherAdsOptionsBase = {
   target: HTMLElement;
   clientId: string;
@@ -26,6 +38,10 @@ type PublisherAdsOptionsBase = {
   conversationId: string;
   timing?: "before" | "during" | "after";
   consentMode?: "wavebird_consent" | "own_cmp";
+  /** Defaults to browser language preferences, then English. Optional BCP 47 language tag or "auto". */
+  consentLocale?: string;
+  /** Presentation only. Does not change consent choices or storage. */
+  consentTheme?: PublisherConsentTheme;
   /** Optional official renderer URL. Only https://api.wavebird.ai/v1/render.js is supported. */
   rendererUrl?: string;
   privacySettingsTarget?: string;

@@ -1,6 +1,6 @@
 # Web integration reference
 
-Applies to `@wavebirdai/api@0.1.0-beta.16`. [Start with the integration steps](../../README.md#set-up-javascript-or-typescript).
+Applies to `@wavebirdai/api@0.1.0-beta.17`. [Start with the integration steps](../../README.md#set-up-javascript-or-typescript).
 
 
 `@wavebirdai/api/server` exports `createPublisherServer`. Configure it with server-only Project ID, Server Test or production Key, preference signing secret, the publisher's real request authorization function, exact `publicOrigins`, and the saved project/placement values shown in the dashboard. The origin list is required. The package compares the browser Origin with a configured public origin whose host matches the route Host, even when Next.js or a proxy gives the route an internal URL. `localhost` and `127.0.0.1` are separate origins, and each port and scheme must match exactly; HTTP loopback is available only with a Server Test Key. A production key also requires its separately approved project and wavebird server authority. Omit `bidfloor` and `bidfloorCurrency` to inherit saved pricing. An explicit override supplies both a nonnegative amount, including zero, and a three-letter currency; the API validates it against the saved project. It returns authenticated `placementPOST`, `consentGET`, `consentPOST`, and `withGeneration` handlers, plus the server-only `reportGeneration(jobId, event)` method. The helper constructs the existing `/v1/placements`, `/v1/consent`, and `/v1/jobs/{id}/generation/{event}` requests; it does not introduce a new wavebird protocol. The wavebird API remains authoritative for saved scope, creative formats, duration, fallback, and financial classification.
@@ -29,6 +29,18 @@ Allow the creative, disclosure and controls to determine the slot height. A fixe
 For renderer failures, the browser's optional `onDiagnostic` receives only a fixed `code`. `renderer_csp_blocked` requires an observed enforced policy violation. `renderer_unavailable` and `renderer_frame_unavailable` do not identify the cause. See the [CSP setup](nextjs.md#generate-files). Callback errors never interrupt model output.
 
 Use the existing `generationId` in the server `onLifecycle` observer to correlate generation events. It is not a credential. Retain only that ID, event category and relative timing, never session identities, request headers or response contents. A renderer error without an exact turn or slot link must stay uncorrelated.
+
+## Consent appearance
+
+The wavebird dialog follows the browser's preferred supported language: English, German, Spanish, French, Portuguese or Japanese, with English as the fallback. Add `consentLocale: "de-DE"` to `createPublisherAds` only to override that preference. Omit it or use `"auto"` for browser detection.
+
+The optional `consentTheme` accepts `accentColor`, `backgroundColor` and `textColor` as six-digit hex colors, `fontFamily` as existing font names, `radius` from 0 to 20, and `spacing` from 12 to 32 pixels. Low-contrast colors fall back to readable colors. No fonts are downloaded. For example:
+
+```js
+consentTheme: { accentColor: "#243c5a", radius: 4, fontFamily: "Arial, sans-serif" }
+```
+
+This is a configuration fragment, not a complete integration. Appearance does not change choices, storage, consent requirements or the `own_cmp` integration. Do not hide, rename or disable consent actions with app styles.
 
 ## Troubleshooting
 

@@ -1,6 +1,6 @@
 # Web integration reference
 
-Applies to `@wavebirdai/api@0.1.0-beta.15`. [Start with the integration steps](../../README.md#set-up-javascript-or-typescript).
+Applies to `@wavebirdai/api@0.1.0-beta.16`. [Start with the integration steps](../../README.md#set-up-javascript-or-typescript).
 
 
 `@wavebirdai/api/server` exports `createPublisherServer`. Configure it with server-only Project ID, Server Test or production Key, preference signing secret, the publisher's real request authorization function, exact `publicOrigins`, and the saved project/placement values shown in the dashboard. The origin list is required. The package compares the browser Origin with a configured public origin whose host matches the route Host, even when Next.js or a proxy gives the route an internal URL. `localhost` and `127.0.0.1` are separate origins, and each port and scheme must match exactly; HTTP loopback is available only with a Server Test Key. A production key also requires its separately approved project and wavebird server authority. Omit `bidfloor` and `bidfloorCurrency` to inherit saved pricing. An explicit override supplies both a nonnegative amount, including zero, and a three-letter currency; the API validates it against the saved project. It returns authenticated `placementPOST`, `consentGET`, `consentPOST`, and `withGeneration` handlers, plus the server-only `reportGeneration(jobId, event)` method. The helper constructs the existing `/v1/placements`, `/v1/consent`, and `/v1/jobs/{id}/generation/{event}` requests; it does not introduce a new wavebird protocol. The wavebird API remains authoritative for saved scope, creative formats, duration, fallback, and financial classification.
@@ -20,6 +20,16 @@ Call `reportGeneration` only from trusted server code with a job ID returned by 
 For `after`, resolve the generation consumer only after your app presents the result. The browser helper waits for both the transport finish and that consumer before starting the placement. If presentation fails, reject the consumer so the placement does not start.
 
 
+## Placement and diagnosis
+
+Place the component where the ad belongs in your layout. Set `positionHint` to `above`, `below`, `sidebar` or `between` to describe that physical position. Omit it to use the project's saved position. The server still enforces formats, timing, maximum sizes, project ownership and consent.
+
+Allow the creative, disclosure and controls to determine the slot height. A fixed creative-only height can crop the ad. In a fixed-height chat, keep the composer separate and allow the ad area to scroll if its expanded information exceeds the available space. Empty or cleared slots should collapse.
+
+For renderer failures, the browser's optional `onDiagnostic` receives only a fixed `code`. `renderer_csp_blocked` requires an observed enforced policy violation. `renderer_unavailable` and `renderer_frame_unavailable` do not identify the cause. See the [CSP setup](nextjs.md#generate-files). Callback errors never interrupt model output.
+
+Use the existing `generationId` in the server `onLifecycle` observer to correlate generation events. It is not a credential. Retain only that ID, event category and relative timing, never session identities, request headers or response contents. A renderer error without an exact turn or slot link must stay uncorrelated.
+
 ## Troubleshooting
 
 With the trusted-session integration, consent restoration reads the current server revision before synchronizing the saved choice. Reloading does not reset consent revisions. An unavailable revision keeps ads disabled until consent can be synchronized; it does not block the model response.
@@ -28,6 +38,7 @@ With the trusted-session integration, consent restoration reads the current serv
 - **Origin rejected:** compare scheme, hostname and port with the saved project and server allowlist. `www.example.com` and `example.com` are separate origins.
 - **No-Fill or `no_fit`:** keep the model result usable. Check saved formats and the measured slot size. Do not stretch a creative to force it to fit.
 - **Empty frame:** record only the fixed error category and relative timing. HTTP 200 alone does not prove visible rendering. Never share signed URLs, headers, tokens or a HAR containing credentials.
+- **Frequency limit:** limits apply to the supplied session. `frequency_cap_exceeded` is an actual cap denial. Test decision metadata identifies its policy and limit; an unknown reset time remains `null`. `frequency_session_required` means session data is missing. `frequency_service_unavailable`, `frequency_context_unavailable` and `frequency_configuration_invalid` are technical failures, not proof of repeated ad exposure.
 - **After ad arrives too early:** resolve the result consumer after the UI has presented the result, not merely after the last network byte.
 
 See [troubleshooting](https://wavebird.ai/api/troubleshooting) and [format behavior](https://wavebird.ai/api/concepts/ad-formats).

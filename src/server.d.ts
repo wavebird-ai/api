@@ -47,7 +47,8 @@ type PublisherServerBaseOptions = {
   gdprApplies?: boolean;
   publisher: { app_name: string; app_domain: string; categories: string[] };
   allowedFormats: Array<"banner" | "native" | "clip">;
-  positionHint: "above" | "below" | "sidebar" | "between";
+  /** Omit to inherit the project's saved position. Must match your physical layout when supplied. */
+  positionHint?: "above" | "below" | "sidebar" | "between";
   /** Optional advanced caps; saved allowedSizes determine the normal envelope. */
   maxWidth?: number;
   maxHeight?: number;

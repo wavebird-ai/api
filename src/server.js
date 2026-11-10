@@ -44,7 +44,7 @@ function normalizeOptions(options) {
   if (!["wavebird_consent", "own_cmp"].includes(options.consentMode)) throw new Error("publisher_consent_mode_invalid");
   if (options.gdprApplies !== undefined && typeof options.gdprApplies !== "boolean") throw new Error("publisher_gdpr_invalid");
   if (!Array.isArray(options.allowedFormats) || options.allowedFormats.length === 0 || options.allowedFormats.some(value => !["banner", "native", "clip"].includes(value))) throw new Error("publisher_formats_invalid");
-  if (!["above", "below", "sidebar", "between"].includes(options.positionHint)) throw new Error("publisher_position_invalid");
+  if (options.positionHint !== undefined && !["above", "below", "sidebar", "between"].includes(options.positionHint)) throw new Error("publisher_position_invalid");
   if (!Array.isArray(options.allowedSizes) || options.allowedSizes.length === 0 || options.allowedSizes.length > MAX_ALLOWED_SIZES || options.allowedSizes.some(size => !size || typeof size !== "object" || Object.keys(size).some(key => !["width", "height", "formats"].includes(key)) || !Number.isSafeInteger(size.width) || !Number.isSafeInteger(size.height) || size.width < 1 || size.height < 1 || size.width > MAX_SIZE_EDGE || size.height > MAX_SIZE_EDGE ||
     (size.formats !== undefined && (!Array.isArray(size.formats) || size.formats.length === 0 || size.formats.some(format => !options.allowedFormats.includes(format)))))) throw new Error("publisher_sizes_invalid");
   if (new Set(options.allowedSizes.map(size => `${size.width}x${size.height}`)).size !== options.allowedSizes.length)

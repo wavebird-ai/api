@@ -52,6 +52,8 @@ export function createPublisherAds(options) {
   if (rendererUrl !== "https://api.wavebird.ai/v1/render.js") throw new Error("publisher_renderer_url_invalid");
   if (options.getFormat !== undefined && typeof options.getFormat !== "function")
     throw new Error("publisher_format_hook_invalid");
+  if (options.onDiagnostic !== undefined && typeof options.onDiagnostic !== "function")
+    throw new Error("publisher_diagnostic_hook_invalid");
   let privacyTarget = null;
   if (consentMode === "wavebird_consent" && options.privacySettingsTarget !== undefined) {
     if (typeof options.privacySettingsTarget !== "string" || !options.privacySettingsTarget.trim())
@@ -62,7 +64,21 @@ export function createPublisherAds(options) {
   let binding = { userId: options.userId, conversationId: options.conversationId,
     sessionId: turnBinding ? options.sessionId : crypto.randomUUID() };
   let sponsor = null, disposed = false, context = 0, active = null;
+  const diagnostic = code => {
+    if (!disposed) { try { options.onDiagnostic?.({ code }); } catch {} }
+  };
+  const onPolicyViolation = event => {
+    if (event.disposition !== "enforce" ||
+        !["script-src", "script-src-elem", "frame-src", "connect-src"].includes(event.effectiveDirective)) return;
+    try {
+      if (new URL(event.blockedURI).origin === "https://api.wavebird.ai") diagnostic("renderer_csp_blocked");
+    } catch {}
+  };
+  document.addEventListener?.("securitypolicyviolation", onPolicyViolation);
   const slot = document.createElement("section");
+  const onRenderFailure = () => diagnostic("renderer_frame_unavailable");
+  // Renderer failures originate in a child mount and do not bubble.
+  slot.addEventListener?.("ad:render_failed", onRenderFailure, true);
   slot.setAttribute("aria-label", "Sponsored placement");
   slot.style.cssText = "width:100%;height:100%;overflow:hidden;margin:0 auto";
   target.append(slot);
@@ -121,8 +137,10 @@ export function createPublisherAds(options) {
     if (active) event(active, "abort");
     disposed = true; context++; active = null;
     sponsor?.dispose(); sponsor = null; slot.remove();
+    slot.removeEventListener?.("ad:render_failed", onRenderFailure, true);
     privacyTarget?.removeEventListener("click", openPrivacySettings);
     window.removeEventListener("pagehide", dispose);
+    document.removeEventListener?.("securitypolicyviolation", onPolicyViolation);
   }
   window.addEventListener("pagehide", dispose);
   const ready = loadRenderer(rendererUrl).then(() => {
@@ -143,7 +161,7 @@ export function createPublisherAds(options) {
         notify("onStarted", active.id); notify("onDone", active.id);
       }
     }
-  }).catch(() => {});
+  }).catch(() => { diagnostic("renderer_unavailable"); });
 
   async function connectGeneration({ request, consume, signal }) {
     const job = { id: crypto.randomUUID(), sessionId: binding.sessionId, context, state: "pending", cancelled: false,

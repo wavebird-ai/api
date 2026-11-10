@@ -30,6 +30,8 @@ type PublisherAdsOptionsBase = {
   rendererUrl?: string;
   privacySettingsTarget?: string;
   getFormat?: () => "banner" | "native" | "clip" | "auto";
+  /** Fixed diagnostic codes only. Exceptions in this callback never interrupt the model. */
+  onDiagnostic?: (event: { code: "renderer_csp_blocked" | "renderer_unavailable" | "renderer_frame_unavailable" }) => void;
   placementEndpoint?: string;
   consentEndpoint?: string;
 };

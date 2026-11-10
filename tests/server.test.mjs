@@ -32,6 +32,26 @@ test("unknown server configuration fields fail closed", () => {
   assert.throws(() => createPublisherServer({ ...saved, allowedSizes: [{ width: 728, height: 90, unknownOption: true }] }), /publisher_sizes_invalid/);
 });
 
+test("position override is optional, explicit and does not widen other placement fields", async () => {
+  for (const positionHint of [undefined, "above", "below", "sidebar", "between"]) {
+    const server = createPublisherServer({ ...saved, positionHint });
+    await withFetch(async (_url, init) => {
+      const body = JSON.parse(init.body);
+      assert.equal(body.slot_hint.position, positionHint);
+      assert.equal(Object.hasOwn(body.slot_hint, "position"), positionHint !== undefined);
+      assert.deepEqual(body.overrides.allowed_formats, saved.allowedFormats);
+      assert.equal(body.overrides.timing, saved.timing);
+      assert.equal(body.slot_hint.max_width, saved.maxWidth);
+      return Response.json({ fill: false });
+    }, async () => {
+      assert.equal((await server.placementPOST(routeRequest("/api/sponsor-slot", {}))).status, 200);
+    });
+  }
+  for (const positionHint of [null, "", "overlay", "BELOW", false]) {
+    assert.throws(() => createPublisherServer({ ...saved, positionHint }), /publisher_position_invalid/);
+  }
+});
+
 test("allowed size and envelope bounds match the current placement contract", () => {
   const accepted = Array.from({ length: 8 }, (_, index) => ({ width: 300 + index, height: 250 }));
   assert.doesNotThrow(() => createPublisherServer({ ...saved, allowedSizes: accepted, maxWidth: 8192, maxHeight: 8192 }));

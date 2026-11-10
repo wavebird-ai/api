@@ -4,10 +4,14 @@ Use this path instead of copying Dashboard's route files. It supports an existin
 
 ## Generate files
 
+The generator never overwrites existing files. If it reports a conflict, keep your app's file and merge the authentication, storage and generation hooks from [Dashboard Overview](https://dashboard.wavebird.ai/wavebird/overview). Do not delete your model implementation to make the generator run.
+
+If your app sets Content Security Policy, allow `https://api.wavebird.ai` in its script, frame and connection rules. Update `script-src-elem` too if your policy uses it. Preserve existing nonces and protections. Do not use wildcards or disable CSP. The optional browser `onDiagnostic` callback reports `renderer_csp_blocked` only for an observed enforced violation, `renderer_unavailable` if loading fails, or `renderer_frame_unavailable` if the ad frame fails. Without a CSP event, the cause remains unknown. Diagnostics never include blocked URLs or credentials.
+
 From the folder containing `package.json`:
 
 ```sh
-npm install @wavebirdai/api@0.1.0-beta.15 server-only
+npm install @wavebirdai/api@0.1.0-beta.16 server-only
 ./node_modules/.bin/wavebird-next init --lang ts --root . --app-dir src/app
 ```
 

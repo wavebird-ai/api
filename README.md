@@ -22,11 +22,11 @@ Use Node.js 20 or later on your server.
 2. **Install the package.** Run this in your app's terminal, in the folder containing `package.json`:
 
    ```sh
-   npm install @wavebirdai/api@0.1.0-beta.15
+   npm install @wavebirdai/api@0.1.0-beta.16
    ```
 
 3. **Save the Server ENV from Overview, Integration step 2.** The key-only download is not the full configuration. Keep `WAVEBIRD_SECRET_KEY` and the stable, project-specific `WAVEBIRD_PREFERENCE_SECRET` out of browser code and Git. Include the saved `WAVEBIRD_PUBLIC_ORIGINS`.
-4. **Connect the backend and frontend code.** Follow Dashboard's generated files to connect your app session, durable turn storage, model stream and ad slot. Keep the saved formats, sizes and timing.
+4. **Connect the backend and frontend code.** Follow Dashboard's generated files to connect your app session, durable turn storage, model stream and ad slot. The source ZIP contains code only; download secret Server ENV separately. Keep the saved formats, sizes and timing. For apps with a Content Security Policy, follow the [exact renderer rules](docs/web/nextjs.md#generate-files).
 5. **Run your first Test ad.** Confirm that the ad appears and the request is recorded in Test Logs. Check that generation still works with declined consent, no available ad and Stop.
 
 Test ads are nonpayable. Complete the [Live prerequisites](https://wavebird.ai/api/guides/going-live) before requesting Live activation.

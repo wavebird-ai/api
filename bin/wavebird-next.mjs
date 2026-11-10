@@ -46,7 +46,7 @@ export async function plan(argv) {
   ];
   for (const [source, dest] of files) {
     await access(source, constants.R_OK);
-    try { await access(dest); throw new Error(`Refusing to overwrite ${dest}`); }
+    try { await access(dest); throw new Error(`Refusing to overwrite ${dest}. Keep the existing file. Copy the matching connection hooks from Dashboard Overview into your app. See https://wavebird.ai/api/quickstart#backend`); }
     catch (error) { if (error.code !== "ENOENT") throw error; }
   }
   return { lang, projectRoot, appDir, files };

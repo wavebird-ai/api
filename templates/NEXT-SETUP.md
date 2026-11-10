@@ -1,5 +1,7 @@
 # Connect wavebird to this Next.js app
 
+If your app sets Content Security Policy, merge `https://api.wavebird.ai` into `script-src`, `frame-src` and `connect-src`. Preserve nonces and existing protections. Do not disable CSP or allow wildcard origins. Keep secret Server ENV outside source downloads, Git and browser bundles.
+
 The generator installed `lib/publisher`, `lib/auth`, `lib/turn-store` and `lib/model`; `app/api/generate`, `app/api/sponsor-slot`, `app/api/sponsor-consent` and `app/api/sponsor-session`; and `components/WavebirdPlacement` (under `src/` when `src/app` was selected). No existing page was replaced.
 
 Install `server-only` in your app (`npm install server-only`). Install `pg` too if you use the PostgreSQL adapter. Use the full Server ENV from Dashboard's Integration step 2, including the saved preference secret and origins. A key-only ENV download is not the full configuration. Keep the preference secret unchanged across restarts.

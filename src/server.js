@@ -256,7 +256,7 @@ export function createPublisherServer(inputOptions) {
   const placementFetch = boundedFetcher();
   const consentFetch = boundedFetcher();
   const generationReportFetch = boundedGenerationReporter();
-  const diagnostic = code => { try { options.onDiagnostic?.(code); } catch {} };
+  const diagnostic = code => { try { Promise.resolve(options.onDiagnostic?.(code)).catch(() => {}); } catch {} };
   if (typeof options.turnJournal?.reconcilePending === "function") {
     void Promise.resolve().then(() => options.turnJournal.reconcilePending(options.clientId, options.surfaceId))
       .catch(() => diagnostic("turn_journal_unavailable"));

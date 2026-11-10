@@ -32,6 +32,19 @@ Use the existing `generationId` in the server `onLifecycle` observer to correlat
 
 ## Troubleshooting
 
+### Consent appearance (local successor candidate)
+
+These options are being checked locally and are not part of the published beta.16 package.
+The wavebird dialog follows the browser's preferred supported language: English, German, Spanish, French, Portuguese or Japanese, with English as the fallback. Add `consentLocale: "de-DE"` to `createPublisherAds` only to override that preference. Omit it or use `"auto"` for browser detection.
+
+The optional `consentTheme` accepts `accentColor`, `backgroundColor` and `textColor` as six-digit hex colors, `fontFamily` as existing font names, `radius` from 0 to 20, and `spacing` from 12 to 32 pixels. Low-contrast colors fall back to readable colors. No fonts are downloaded. For example:
+
+```js
+consentTheme: { accentColor: "#243c5a", radius: 4, fontFamily: "Arial, sans-serif" }
+```
+
+This is a configuration fragment, not a complete integration. Appearance does not change choices, storage, consent requirements or the `own_cmp` integration. Do not hide, rename or disable consent actions with app styles.
+
 With the trusted-session integration, consent restoration reads the current server revision before synchronizing the saved choice. Reloading does not reset consent revisions. An unavailable revision keeps ads disabled until consent can be synchronized; it does not block the model response.
 
 - **401:** check the app session and server authorization before changing the wavebird key.

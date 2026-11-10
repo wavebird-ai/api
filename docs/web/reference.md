@@ -32,7 +32,11 @@ Use the existing `generationId` in the server `onLifecycle` observer to correlat
 
 ## Consent appearance
 
-The wavebird dialog follows the browser's preferred supported language: English, German, Spanish, French, Portuguese or Japanese, with English as the fallback. Add `consentLocale: "de-DE"` to `createPublisherAds` only to override that preference. Omit it or use `"auto"` for browser detection.
+The hosted renderer uses the first supported language in the visitor's browser preferences. Optional `consentLocale: "de-DE"` on `createPublisherAds` is a fallback if none matches. English is the final fallback. Omit it or use `"auto"` to keep the English fallback.
+
+Supported languages: English, Spanish, German, Japanese, French, Portuguese, Russian, Italian, Dutch, Polish, Turkish, Indonesian, Chinese, Persian, Czech, Vietnamese, Korean, Arabic, Ukrainian and Hungarian. Chinese includes simplified and traditional script. Korean uses South Korean wording. Arabic and Persian use right-to-left text.
+
+Language support is delivered by the hosted renderer. This reference corrects the fixed-override description bundled with the original beta.17 archive: browser preferences take priority over the publisher fallback.
 
 The optional `consentTheme` accepts `accentColor`, `backgroundColor` and `textColor` as six-digit hex colors, `fontFamily` as existing font names, `radius` from 0 to 20, and `spacing` from 12 to 32 pixels. Low-contrast colors fall back to readable colors. No fonts are downloaded. For example:
 

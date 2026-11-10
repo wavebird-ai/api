@@ -41,7 +41,7 @@ Use `@wavebirdai/api/server` on the server and `@wavebirdai/api/browser` for the
 
 ## Consent appearance
 
-The wavebird dialog follows the browser language, with English as the fallback. Optional language and theme settings let it match your app while preserving consent choices and behavior. See [consent appearance](https://github.com/wavebird-ai/api/blob/main/docs/web/reference.md#consent-appearance) for supported languages and options.
+The wavebird dialog follows the visitor's browser language. Optional `consentLocale` supplies a fallback before English; `consentTheme` adjusts appearance. Consent choices and permissions stay unchanged. See [consent appearance](https://github.com/wavebird-ai/api/blob/main/docs/web/reference.md#consent-appearance) for supported languages and options.
 
 ## Update an existing integration
 

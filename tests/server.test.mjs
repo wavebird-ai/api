@@ -128,6 +128,7 @@ test("explicit GDPR policy flag must be a boolean", () => {
 test("server diagnostic hook rejects invalid supplied values and contains callback failure", async () => {
   for (const onDiagnostic of [null, false, 0, "", "callback", {}])
     assert.throws(() => createPublisherServer({ ...saved, onDiagnostic }), /publisher_diagnostic_invalid/);
+  for (const failure of ["throw", "reject", "pending"]) {
   const codes = [];
   const server = createPublisherServer({ ...saved,
     sessionIdForRequest: () => { throw new Error("synthetic_session_unavailable"); },
@@ -135,12 +136,19 @@ test("server diagnostic hook rejects invalid supplied values and contains callba
       claimPlacement: async () => true, releaseRejectedPlacement: async () => {},
       bind: async () => {}, claimGeneration: async () => true, phase: async () => {},
     },
-    onDiagnostic: code => { codes.push(code); throw new Error("synthetic_diagnostic_failure"); },
+    onDiagnostic: code => {
+      codes.push(code);
+      if (failure === "throw") throw new Error("synthetic_diagnostic_failure");
+      if (failure === "reject") return Promise.reject(new Error("synthetic_diagnostic_failure"));
+      return new Promise(() => {});
+    },
   });
   const result = await server.sessionGET(routeRequest("/api/sponsor-session"));
   assert.equal(result.status, 503);
   assert.deepEqual(await result.json(), { error: "publisher_session_unavailable" });
   assert.deepEqual(codes, ["publisher_session_unavailable"]);
+  await new Promise(resolve => setImmediate(resolve));
+  }
 });
 
 test("server session and journal hooks reject incomplete and malformed pairs", () => {

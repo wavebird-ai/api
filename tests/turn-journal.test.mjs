@@ -20,6 +20,23 @@ test("journal diagnostic hook rejects invalid supplied values", () => {
     }), /publisher_diagnostic_invalid/);
 });
 
+for (const failure of ["throw", "reject", "pending"]) test(`journal contains ${failure} diagnostic callbacks without blocking reconciliation`, async () => {
+  const codes = [];
+  const journal = createPublisherTurnJournal({
+    storage: { atomic: async () => {}, scan: async () => [], prune: async () => 1 },
+    keySecret: "synthetic-stable-turn-key-secret-32-bytes", reportGeneration: async () => {},
+    onDiagnostic: code => {
+      codes.push(code);
+      if (failure === "throw") throw new Error("synthetic_diagnostic_failure");
+      if (failure === "reject") return Promise.reject(new Error("synthetic_diagnostic_failure"));
+      return new Promise(() => {});
+    },
+  });
+  await journal.reconcilePending("wbproj_synthetic", "assistant");
+  assert.deepEqual(codes, ["generation_report_retention_expired"]);
+  await new Promise(resolve => setImmediate(resolve));
+});
+
 test("a changed key cannot claim an existing turn as new across workers", async () => {
   const storage = new AtomicStore();
   const turn = { projectId: "wbproj_synthetic", surfaceId: "assistant", sessionId: "session", turnId: "turn" };

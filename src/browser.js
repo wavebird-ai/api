@@ -65,7 +65,7 @@ export function createPublisherAds(options) {
     sessionId: turnBinding ? options.sessionId : crypto.randomUUID() };
   let sponsor = null, disposed = false, context = 0, active = null;
   const diagnostic = code => {
-    if (!disposed) { try { options.onDiagnostic?.({ code }); } catch {} }
+    if (!disposed) { try { Promise.resolve(options.onDiagnostic?.({ code })).catch(() => {}); } catch {} }
   };
   const onPolicyViolation = event => {
     if (event.disposition !== "enforce" ||

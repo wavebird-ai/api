@@ -22,7 +22,7 @@ export function createPublisherTurnJournal({ storage, reportGeneration, keySecre
   const tasks = new Set();
   let activeReports = 0;
   const reportWaiters = [];
-  const diagnostic = code => { try { onDiagnostic?.(code); } catch {} };
+  const diagnostic = code => { try { Promise.resolve(onDiagnostic?.(code)).catch(() => {}); } catch {} };
   const verifiedScopes = new Set();
   const versionKey = createHash("sha256").update("wavebird/turn-journal-version-row/v1").digest("hex");
   const keyFingerprint = createHmac("sha256", keySecret).update("wavebird/turn-journal-key-version/v1").digest("hex");

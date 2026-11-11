@@ -97,7 +97,9 @@ export function createPublisherAds(options) {
   // Renderer failures originate in a child mount and do not bubble.
   slot.addEventListener?.("ad:render_failed", onRenderFailure, true);
   slot.setAttribute("aria-label", "Sponsored placement");
-  slot.style.cssText = "width:100%;height:100%;overflow:hidden;margin:0 auto";
+  // The hosted creative clips its own contents. Clipping this full-width mount
+  // loses a fractional pixel at some device scales and invalidates visibility.
+  slot.style.cssText = "width:100%;height:100%;overflow:visible;margin:0 auto";
   target.append(slot);
   const openPrivacySettings = () => { if (!disposed) sponsor?.openPrivacySettings(); };
   privacyTarget?.addEventListener("click", openPrivacySettings);

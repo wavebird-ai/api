@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.0-beta.18
+
+- Prevent fractional clipping of the hosted ad frame at some device scales.
+- Correct the consent language guidance: browser preference comes first, then the publisher fallback.
+
 ## 0.1.0-beta.17
 
 - Optional `consentLocale` and `consentTheme` browser settings for the hosted consent dialog.
@@ -29,6 +34,6 @@
 - Generation examples that preserve the app's request, response display and cancellation.
 - Updated package description, documentation link and search keywords.
 
-Runtime code, exports and generator templates are unchanged from `0.1.0-beta.12`. Dashboard-generated integrations remain on their selected version. The README installation command follows Dashboard's current `beta.12` selection.
+At `0.1.0-beta.13`, runtime code, exports and generator templates were unchanged from `0.1.0-beta.12`. Existing integrations remain on their selected version until explicitly upgraded.
 
 The Python `0.1.0b9` source is included in the repository. Its released wheel is unchanged and is installed separately from npm.

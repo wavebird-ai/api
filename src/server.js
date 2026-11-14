@@ -288,9 +288,10 @@ export function createPublisherServer(inputOptions) {
   const cookie = (value, ttl = PREFERENCE_TTL) => `${cookieName}=${value}; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=${ttl}`;
   const scope = request => ({ project: options.clientId, surface: options.surfaceId, version: PREFERENCE_VERSION,
     profile: options.consentMode === "wavebird_consent" ? "wavebird_dialog" : "publisher_custom", origin: publicOrigin(request, options) });
+  let preferenceKeyPromise;
   async function preferenceKey() {
     if (new TextEncoder().encode(options.preferenceSecret).byteLength < 32) throw new Error("preference_secret_required");
-    return crypto.subtle.importKey("raw", new TextEncoder().encode(options.preferenceSecret), { name: "HMAC", hash: "SHA-256" }, false, ["sign", "verify"]);
+    return preferenceKeyPromise ??= crypto.subtle.importKey("raw", new TextEncoder().encode(options.preferenceSecret), { name: "HMAC", hash: "SHA-256" }, false, ["sign", "verify"]);
   }
   async function signPreference(request, state) {
     const now = Date.now();
@@ -432,6 +433,13 @@ export function createPublisherServer(inputOptions) {
       !["granted", "denied", "withdrawn", "cmp_error"].includes(input.lifecycle_state) ||
       !Number.isSafeInteger(input.revision) || input.revision < 1) return response("consent_input_invalid", 400);
     if (["tcf_string", "gpp_string", "gpp_sections"].some(field => Object.hasOwn(input, field))) return response("external_consent_protocol_requires_policy", 400);
+    if (options.sessionIdForRequest) {
+      let sessionId;
+      try { sessionId = await journalCall(() => options.sessionIdForRequest(request)); }
+      catch { return response("publisher_session_unavailable", 503); }
+      if (!ID.test(sessionId || "")) return response("publisher_session_unavailable", 401);
+      if (input.session_id.trim() !== sessionId) return response("publisher_session_mismatch", 401);
+    }
     const clear = input.remember_for_30_days === true ? { "Set-Cookie": cookie("", 0) } : {};
     if (input.remember_for_30_days === true) {
       try { await preferenceKey(); } catch { return response("preference_unavailable", 503, clear); }

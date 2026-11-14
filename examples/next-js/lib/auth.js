@@ -21,6 +21,7 @@ export function sessionIdForRequest(request) {
         cache: "no-store", redirect: "manual", signal: AbortSignal.timeout(1500),
       });
       const id = result.headers.get("x-publisher-session-id");
+      void result.body?.cancel().catch(() => {});
       return result.status === 204 && ID.test(id || "") ? id : null;
     } catch { return null; }
   })();

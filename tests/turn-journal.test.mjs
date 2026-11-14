@@ -85,6 +85,44 @@ async function waitFor(predicate) {
   assert.fail("timed out waiting for bounded local report state");
 }
 
+test("queued reports acquire leases only after dispatch capacity and remain unique across workers", async () => {
+  const realNow = Date.now;
+  let now = realNow(), active = 0, maximum = 0;
+  Date.now = () => now;
+  const storage = new AtomicStore(), pending = [], calls = [];
+  const reportGeneration = async (job, event) => {
+    calls.push([job, event]); maximum = Math.max(maximum, ++active);
+    await new Promise(resolve => pending.push(resolve)); active--;
+  };
+  const make = () => createPublisherTurnJournal({ storage, reportGeneration,
+    keySecret: "synthetic-stable-turn-key-secret-32-bytes" });
+  try {
+    const first = make();
+    for (let i = 0; i < 13; i++) {
+      const turn = { projectId: "wbproj_synthetic", surfaceId: "assistant", sessionId: "session", turnId: `queued_${i}` };
+      await first.claimPlacement(turn); await first.claimGeneration(turn);
+      await first.bind(turn, `job_queued_${i}`); await first.phase(turn, "started");
+    }
+    await waitFor(() => calls.length === 4);
+    for (let wave = 0; wave < 3; wave++) {
+      now += 4000;
+      pending.splice(0, 4).forEach(resolve => resolve());
+      await waitFor(() => calls.length >= Math.min(13, (wave + 2) * 4));
+    }
+    const second = make();
+    await second.reconcilePending("wbproj_synthetic", "assistant");
+    assert.equal(calls.filter(([job]) => job === "job_queued_12").length, 1);
+    assert.equal(calls.length, 13); assert.equal(maximum, 4);
+    pending.splice(0).forEach(resolve => resolve());
+    await waitFor(() => active === 0);
+    await second.reconcilePending("wbproj_synthetic", "assistant");
+    assert.equal(calls.length, 13);
+  } finally {
+    pending.splice(0).forEach(resolve => resolve());
+    Date.now = realNow;
+  }
+});
+
 test("package journal owns exact turn, ordered report retry and restart reconciliation", async () => {
   const storage = new AtomicStore();
   const attempts = [];

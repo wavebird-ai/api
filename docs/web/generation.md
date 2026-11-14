@@ -1,10 +1,10 @@
 # Connect generation to the displayed result
 
-These are connection helpers, not complete apps. Use the same installed `@wavebirdai/api@0.1.0-beta.17` as your server routes.
+These are connection helpers, not complete apps. Use the same installed `@wavebirdai/api@0.1.0-beta.19` as your server routes.
 
 - `ads` is the instance for this surface, returned by `createPublisherAds` or the generated component's `onReady` callback.
 - `sendExistingRequest` sends your existing authenticated model request. Merge the provided headers into its headers and preserve its body and abort signal. Call the route wrapped by `withGeneration`.
-- `consumeAndPresentResponse` is your existing response parser and UI consumer. Call `onDelta` as output becomes visible. Call `onPresented` when the result is presented. Resolve after presentation, and reject on failure. For an image, do not report progress before the result is displayed.
+- `consumeAndPresentResponse` is your existing response parser and UI consumer. Call `onDelta` as output becomes visible and `onPresented` when the result is presented. Resolve after presentation and reject on failure. Capture the same abort signal to stop your own UI updates after Stop or a new submit. For an image, do not report progress before the result is displayed.
 
 ## TypeScript
 
@@ -22,10 +22,7 @@ export function runGeneration<T>(
   return ads.connectGeneration({
     signal,
     request: headers => sendExistingRequest(headers, signal),
-    consume: (response, lifecycle) => consumeAndPresentResponse(response, {
-      onDelta: lifecycle.onDelta,
-      onPresented: () => lifecycle.onPresented?.(),
-    }),
+    consume: consumeAndPresentResponse,
   });
 }
 ```
@@ -39,15 +36,12 @@ export function runGeneration(
   return ads.connectGeneration({
     signal,
     request: headers => sendExistingRequest(headers, signal),
-    consume: (response, lifecycle) => consumeAndPresentResponse(response, {
-      onDelta: lifecycle.onDelta,
-      onPresented: () => lifecycle.onPresented?.(),
-    }),
+    consume: consumeAndPresentResponse,
   });
 }
 ```
 
-The optional call preserves model-only responses, which do not provide an ad presentation callback in this package version. It does not convert failed advertising into a successful ad result.
+Both callbacks are available for every response in this version. For raw/model-only fallback responses they are no-ops; calling them does not start an ad or mark a failed ad as successful.
 
 ## Timing and cleanup
 

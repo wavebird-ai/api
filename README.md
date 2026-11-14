@@ -16,17 +16,17 @@ Native iOS and Android packages are not currently available. See [integration pa
 
 ## Set up JavaScript or TypeScript
 
-Use Node.js 20 or later on your server.
+Use a [supported Node.js LTS release](https://github.com/nodejs/Release#release-schedule) with current security updates. The technical minimum remains Node.js 20, which is no longer maintained.
 
-1. **Open your project in Dashboard.** Choose your language and package version. In App settings, verify the domain using a DNS TXT record or HTTPS file, then save your HTTPS app URL and approved origins. `www.example.com` and `example.com` are separate hosts.
+1. **Open your app in Dashboard.** Choose JavaScript or TypeScript. New apps use the current package; existing apps keep their saved version. Verify your domain with an HTTPS file or DNS TXT record, then save your HTTPS app URL and approved origins. `www.example.com` and `example.com` are separate hosts.
 2. **Install the package.** Run this in your app's terminal, in the folder containing `package.json`:
 
    ```sh
-   npm install @wavebirdai/api@0.1.0-beta.17
+   npm install @wavebirdai/api@0.1.0-beta.19
    ```
 
 3. **Save the Server ENV from Overview, Integration step 2.** The key-only download is not the full configuration. Keep `WAVEBIRD_SECRET_KEY` and the stable, project-specific `WAVEBIRD_PREFERENCE_SECRET` out of browser code and Git. Include the saved `WAVEBIRD_PUBLIC_ORIGINS`.
-4. **Connect the backend and frontend code.** Follow Dashboard's generated files to connect your app session, durable turn storage, model stream and ad slot. The source ZIP contains code only; download secret Server ENV separately. Keep the saved formats, sizes and timing. For apps with a Content Security Policy, follow the [exact renderer rules](https://github.com/wavebird-ai/api/blob/main/docs/web/nextjs.md#generate-files).
+4. **Connect the backend and frontend code.** Follow Dashboard's generated files to connect your app session, durable turn storage, model stream and ad slot. The source ZIP contains code only; download secret Server ENV separately. Keep the project-approved formats, timing and size limits. For apps with a Content Security Policy, follow the [exact renderer rules](https://github.com/wavebird-ai/api/blob/main/docs/web/nextjs.md#generate-files).
 5. **Run your first Test ad.** Confirm that the ad appears and the request is recorded in Test Logs. Check that generation still works with declined consent, no available ad and Stop.
 
 Test ads are nonpayable. Complete the [Live prerequisites](https://wavebird.ai/api/guides/going-live) before requesting Live activation.
@@ -35,13 +35,13 @@ For Next.js, you can use the [generator](https://github.com/wavebird-ai/api/blob
 
 ## Connect your model output
 
-Use `@wavebirdai/api/server` on the server and `@wavebirdai/api/browser` for the ad slot. Your response consumer must display the model output and finish only after the result is visible.
+Use `@wavebirdai/api/server` on the server and `@wavebirdai/api/browser` for the ad slot. Your response consumer must display the model output and finish only after the result is visible. Forward the same abort signal to your request and stop your own UI updates when it is aborted. Canceled or superseded generations reject with `generation_aborted`.
 
 [JavaScript and TypeScript examples](https://github.com/wavebird-ai/api/blob/main/docs/web/generation.md) | [Server and browser reference](https://github.com/wavebird-ai/api/blob/main/docs/web/reference.md)
 
 ## Consent appearance
 
-The wavebird dialog follows the browser language, with English as the fallback. Optional language and theme settings let it match your app while preserving consent choices and behavior. See [consent appearance](https://github.com/wavebird-ai/api/blob/main/docs/web/reference.md#consent-appearance) for supported languages and options.
+The wavebird dialog follows the visitor's browser language. Optional `consentLocale` supplies a fallback before English; `consentTheme` adjusts appearance. Consent choices and permissions stay unchanged. See [consent appearance](https://github.com/wavebird-ai/api/blob/main/docs/web/reference.md#consent-appearance) for supported languages and options.
 
 ## Update an existing integration
 

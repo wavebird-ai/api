@@ -1,5 +1,7 @@
 # Connect wavebird to this Next.js app
 
+Use a supported Node.js LTS release with current security updates. Node.js 20 remains the technical minimum, but is no longer maintained.
+
 If your app sets Content Security Policy, merge `https://api.wavebird.ai` into `script-src`, `frame-src` and `connect-src`. Preserve nonces and existing protections. Do not disable CSP or allow wildcard origins. Keep secret Server ENV outside source downloads, Git and browser bundles.
 
 The generator installed `lib/publisher`, `lib/auth`, `lib/turn-store` and `lib/model`; `app/api/generate`, `app/api/sponsor-slot`, `app/api/sponsor-consent` and `app/api/sponsor-session`; and `components/WavebirdPlacement` (under `src/` when `src/app` was selected). No existing page was replaced.
@@ -14,3 +16,5 @@ Install `server-only` in your app (`npm install server-only`). Install `pg` too 
 6. In an existing client page, mount `<WavebirdPlacement clientId={publicProjectId} userId={authenticatedUserId} conversationId={activeConversationId} onReady={setAds} />` beside the real generation result, outside the input and transcript. The component retrieves the non-credential session ID through the authenticated same-origin route. When the user starts their existing generation, call `ads.connectGeneration({ signal, request: headers => fetch('/api/generate', { method: 'POST', headers, signal }), consume: async (response, lifecycle) => { /* consume your existing stream and call lifecycle.onDelta() for each delta */ } })`. Abort that same signal on Stop, logout or unmount. Use a stable `onReady` callback. This example uses wavebird's consent dialog; if the saved project uses the publisher's own CMP, connect its real grant/deny/withdrawal/expiry/GPC lifecycle instead of changing only the label.
 
 These routes are real required Next.js files, not hidden package behavior. The package has no knowledge of your login session, CMP, or model stream. Start with a Test project and check that No-Fill, abort and late responses never block the primary result; all Test facts must remain nonpayable.
+
+Your response consumer must stop UI updates when the same abort signal is canceled and resolve only after the result is visible. Call `lifecycle.onPresented()` when the result is presented. Superseded or stopped generations reject with `generation_aborted`. Set pool acquisition, query and lock timeouts on your existing database pool. If idle periods require pending-report recovery, call `turnJournal.reconcilePending(projectId, surfaceId)` from your existing server maintenance job.

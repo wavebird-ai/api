@@ -3,6 +3,12 @@
 ## 0.1.0-beta.19
 
 - Bind consent writes to the authenticated publisher session when a trusted session resolver is configured. A stale or different session is rejected before any consent write or preference-cookie change.
+- Release late model response bodies after cancellation, including browser disposal and conversation changes.
+- Reject canceled or superseded generations after asynchronous result presentation instead of returning success.
+- Supply both lifecycle callbacks for raw/model-only responses and the helper without an ad mount.
+- Acquire generation-report leases only when a dispatch slot is available, preventing expiry while queued.
+- Reuse each server instance's non-exportable preference signing key and release rejected auth-check bodies in the examples.
+- Clarify maintained Node.js runtimes, response cancellation, database timeouts and pending-report recovery. Existing package pins and technical minimum remain unchanged.
 
 ## 0.1.0-beta.18
 

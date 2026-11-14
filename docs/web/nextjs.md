@@ -2,6 +2,8 @@
 
 Use this path instead of copying Dashboard's route files. It supports an existing Next.js App Router app with JavaScript or TypeScript. Use the saved Dashboard configuration in either path.
 
+Run the app on a supported Node.js LTS release with current security updates. Node.js 20 remains the technical minimum, but is no longer maintained.
+
 ## Generate files
 
 The generator never overwrites existing files. If it reports a conflict, keep your app's file and merge the authentication, storage and generation hooks from [Dashboard Overview](https://dashboard.wavebird.ai/wavebird/overview). Do not delete your model implementation to make the generator run.

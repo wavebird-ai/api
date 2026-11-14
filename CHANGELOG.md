@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Bind consent writes to the authenticated publisher session when a trusted session resolver is configured. A stale or different session is rejected before any consent write or preference-cookie change.
+
 ## 0.1.0-beta.18
 
 - Prevent fractional clipping of the hosted ad frame at some device scales.

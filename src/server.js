@@ -432,6 +432,13 @@ export function createPublisherServer(inputOptions) {
       !["granted", "denied", "withdrawn", "cmp_error"].includes(input.lifecycle_state) ||
       !Number.isSafeInteger(input.revision) || input.revision < 1) return response("consent_input_invalid", 400);
     if (["tcf_string", "gpp_string", "gpp_sections"].some(field => Object.hasOwn(input, field))) return response("external_consent_protocol_requires_policy", 400);
+    if (options.sessionIdForRequest) {
+      let sessionId;
+      try { sessionId = await journalCall(() => options.sessionIdForRequest(request)); }
+      catch { return response("publisher_session_unavailable", 503); }
+      if (!ID.test(sessionId || "")) return response("publisher_session_unavailable", 401);
+      if (input.session_id.trim() !== sessionId) return response("publisher_session_mismatch", 401);
+    }
     const clear = input.remember_for_30_days === true ? { "Set-Cookie": cookie("", 0) } : {};
     if (input.remember_for_30_days === true) {
       try { await preferenceKey(); } catch { return response("preference_unavailable", 503, clear); }

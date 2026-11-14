@@ -61,7 +61,8 @@ type PublisherServerBaseOptions = {
 /** Trusted session resolution and the durable turn journal must be supplied together. */
 export type PublisherServerOptions = PublisherServerBaseOptions & (
   { sessionIdForRequest?: never; turnJournal?: never } |
-  { sessionIdForRequest: (request: Request) => string | null | Promise<string | null>;
+  { /** Resolve the current authenticated session for consent, placement and generation requests. */
+    sessionIdForRequest: (request: Request) => string | null | Promise<string | null>;
     turnJournal: PublisherTurnJournal }
 );
 export type GenerationLifecycleEvent = {

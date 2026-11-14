@@ -288,9 +288,10 @@ export function createPublisherServer(inputOptions) {
   const cookie = (value, ttl = PREFERENCE_TTL) => `${cookieName}=${value}; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=${ttl}`;
   const scope = request => ({ project: options.clientId, surface: options.surfaceId, version: PREFERENCE_VERSION,
     profile: options.consentMode === "wavebird_consent" ? "wavebird_dialog" : "publisher_custom", origin: publicOrigin(request, options) });
+  let preferenceKeyPromise;
   async function preferenceKey() {
     if (new TextEncoder().encode(options.preferenceSecret).byteLength < 32) throw new Error("preference_secret_required");
-    return crypto.subtle.importKey("raw", new TextEncoder().encode(options.preferenceSecret), { name: "HMAC", hash: "SHA-256" }, false, ["sign", "verify"]);
+    return preferenceKeyPromise ??= crypto.subtle.importKey("raw", new TextEncoder().encode(options.preferenceSecret), { name: "HMAC", hash: "SHA-256" }, false, ["sign", "verify"]);
   }
   async function signPreference(request, state) {
     const now = Date.now();

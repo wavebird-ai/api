@@ -145,7 +145,7 @@ export function createPublisherAds(options) {
     if (next.userId === binding.userId && next.conversationId === binding.conversationId &&
         (!turnBinding || next.sessionId === binding.sessionId)) return;
     if (turnBinding && next.sessionId === binding.sessionId) throw new Error("publisher_session_reuse");
-    if (active) event(active, "abort");
+    active?.cancel?.();
     context++; active = null;
     binding = { userId: next.userId, conversationId: next.conversationId,
       sessionId: turnBinding ? next.sessionId : crypto.randomUUID() };
@@ -153,7 +153,7 @@ export function createPublisherAds(options) {
   }
   function dispose() {
     if (disposed) return;
-    if (active) event(active, "abort");
+    active?.cancel?.();
     disposed = true; context++; active = null;
     sponsor?.dispose(); sponsor = null; slot.remove();
     slot.removeEventListener?.("ad:render_failed", onRenderFailure, true);
@@ -187,20 +187,21 @@ export function createPublisherAds(options) {
   async function connectGeneration({ request, consume, signal }) {
     const job = { id: crypto.randomUUID(), sessionId: binding.sessionId, context, state: "pending", cancelled: false,
       presented: false, consumed: false };
-    if (active) event(active, "abort");
-    active = job;
-    let reader = null, ended = false, buffer = "";
+    active?.cancel?.();
+    let reader = null, response = null, ended = false, buffer = "";
     const decoder = new TextDecoder();
     const abort = () => { event(job, "abort"); job.cancelled = true; void reader?.cancel().catch(() => {}); };
+    job.cancel = abort;
+    active = job;
     signal?.addEventListener("abort", abort, { once: true });
     if (signal?.aborted) abort();
     const headers = { "x-wavebird-session-id": job.sessionId, "x-wavebird-generation-id": job.id };
     try {
       if (signal?.aborted) throw new Error("generation_aborted");
-      const response = await request(headers);
+      response = await request(headers);
       if (!current(job)) throw new Error("generation_aborted");
       if (response.headers.get("x-wavebird-generation-transport") !== "1") {
-        const result = await consume(response, { onDelta() {} });
+        const result = await consume(response, { onDelta() {}, onPresented() {} });
         if (!current(job)) throw new Error("generation_aborted");
         return result;
       }
@@ -208,6 +209,7 @@ export function createPublisherAds(options) {
       reader = response.body.getReader();
       async function nextRecord() {
         while (true) {
+          if (!current(job)) throw new Error("generation_aborted");
           const boundary = buffer.indexOf("\n");
           if (boundary >= 0) {
             const line = buffer.slice(0, boundary); buffer = buffer.slice(boundary + 1);
@@ -218,7 +220,7 @@ export function createPublisherAds(options) {
           }
           if (buffer.length > 32768) throw new Error("generation_transport_limit");
           const next = await reader.read();
-          if (signal?.aborted) throw new Error("generation_aborted");
+          if (!current(job)) throw new Error("generation_aborted");
           if (next.done) throw new Error("generation_transport_truncated");
           buffer += decoder.decode(next.value, { stream: true });
         }
@@ -272,6 +274,7 @@ export function createPublisherAds(options) {
         event(job, "progress");
         if (timing === "before" || (timing === "during" && options.jobType === "image")) event(job, "presented");
       }, onPresented: () => event(job, "presented") });
+      if (!current(job)) throw new Error("generation_aborted");
       job.consumed = true;
       if (timing === "before" || (timing === "during" && options.jobType === "image")) event(job, "presented");
       if (timing === "after" && ended && !noBody) event(job, "done");
@@ -283,6 +286,8 @@ export function createPublisherAds(options) {
       if (!ended && job.state === "started") event(job, "abort");
       signal?.removeEventListener("abort", abort);
       if (reader) { try { await reader.cancel(); } catch {} reader.releaseLock(); }
+      else if (response?.body && !response.body.locked) void response.body.cancel().catch(() => {});
+      job.cancel = null;
     }
   }
   return { ready, connectGeneration, setConversation, dispose, openPrivacySettings,
@@ -292,7 +297,7 @@ export function createPublisherAds(options) {
 }
 
 export async function connectPublisherGeneration(url, init, consume, ads = window.publisherAds) {
-  if (!ads) return consume(await fetch(url, init), { onDelta() {} });
+  if (!ads) return consume(await fetch(url, init), { onDelta() {}, onPresented() {} });
   return ads.connectGeneration({
     signal: init.signal ?? undefined,
     request: values => {

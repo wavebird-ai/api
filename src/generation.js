@@ -11,10 +11,15 @@ function generationTransport({ request, run }) {
     request.signal.addEventListener("abort", stop, { once: true });
     if (request.signal.aborted)
         stop();
-    let reader = null;
+    let reader = null, modelResponse = null;
     let pending;
     try {
-        pending = Promise.resolve(run(abort.signal));
+        pending = Promise.resolve(run(abort.signal)).then(response => {
+            modelResponse = response;
+            if (abort.signal.aborted && response?.body && !response.body.locked)
+                void response.body.cancel().catch(() => { });
+            return response;
+        });
     }
     catch (error) {
         pending = Promise.reject(error);
@@ -67,6 +72,9 @@ function generationTransport({ request, run }) {
                 catch { }
                 reader.releaseLock();
             }
+            else if (modelResponse?.body && !modelResponse.body.locked) {
+                void modelResponse.body.cancel().catch(() => { });
+            }
             request.signal.removeEventListener("abort", stop);
         }
     }
@@ -87,6 +95,9 @@ function generationTransport({ request, run }) {
         cancel(reason) {
             abort.abort(reason);
             void reader?.cancel(reason).catch(() => { });
+            if (!reader && modelResponse?.body && !modelResponse.body.locked)
+                void modelResponse.body.cancel(reason).catch(() => { });
+            request.signal.removeEventListener("abort", stop);
             void iterator.return(undefined).catch(() => { });
         }
     }, { highWaterMark: 1 });

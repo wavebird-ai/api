@@ -46,12 +46,15 @@ test('generated auth checks use only configured public origins before forwarding
     assert.equal(calls.length, 1);
 
     process.env.WAVEBIRD_PUBLIC_ORIGINS = 'https://publisher.example';
+    let cancelled = 0;
     globalThis.fetch = async (url, init) => {
       calls.push({ url: String(url), cookie: init.headers.cookie });
-      return new Response(null, { status: 302, headers: { location: 'https://attacker.invalid/collect' } });
+      return new Response(new ReadableStream({ cancel() { cancelled++; } }),
+        { status: 302, headers: { location: 'https://attacker.invalid/collect' } });
     };
     assert.equal(await sessionIdForRequest(request('https://publisher.example/api/sponsor-session')), null);
     assert.equal(calls.at(-1).url, 'https://publisher.example/auth/check');
+    assert.equal(cancelled, 1, 'rejected auth responses must release their body');
   } finally {
     globalThis.fetch = oldFetch;
     if (oldPath === undefined) delete process.env.PUBLISHER_AUTH_CHECK_PATH;

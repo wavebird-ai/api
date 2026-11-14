@@ -19,7 +19,6 @@ export function createPublisherTurnJournal({ storage, reportGeneration, keySecre
     throw new Error("publisher_turn_key_secret_invalid");
   if (onDiagnostic !== undefined && typeof onDiagnostic !== "function")
     throw new Error("publisher_diagnostic_invalid");
-  const tasks = new Set();
   let activeReports = 0;
   const reportWaiters = [];
   const diagnostic = code => { try { Promise.resolve(onDiagnostic?.(code)).catch(() => {}); } catch {} };
@@ -77,9 +76,7 @@ export function createPublisherTurnJournal({ storage, reportGeneration, keySecre
     });
   }
   function schedule(scope, key) {
-    const task = drain(scope, key).catch(() => diagnostic("turn_journal_unavailable"));
-    tasks.add(task);
-    void task.finally(() => tasks.delete(task));
+    void drain(scope, key).catch(() => diagnostic("turn_journal_unavailable"));
   }
   async function bind(turn, jobId) {
     if (!JOB_ID.test(jobId || "")) throw new Error("publisher_job_id_invalid");
@@ -125,15 +122,20 @@ export function createPublisherTurnJournal({ storage, reportGeneration, keySecre
   }
   async function drain(scope, key) {
     while (true) {
-      const next = await lease(scope, key);
-      if (!next) return;
       if (activeReports >= 4) await new Promise(resolve => reportWaiters.push(resolve));
-      activeReports++;
+      else activeReports++;
       let accepted = false;
-      try { await reportGeneration(next.jobId, next.event); accepted = true; }
-      catch { diagnostic("generation_report_unavailable"); }
-      finally { activeReports--; reportWaiters.shift()?.(); }
-      await ack(scope, key, next.event, next.leaseId, accepted);
+      try {
+        const next = await lease(scope, key);
+        if (!next) return;
+        try { await reportGeneration(next.jobId, next.event); accepted = true; }
+        catch { diagnostic("generation_report_unavailable"); }
+        await ack(scope, key, next.event, next.leaseId, accepted);
+      } finally {
+        const waiter = reportWaiters.shift();
+        if (waiter) waiter();
+        else activeReports--;
+      }
       if (!accepted) return;
     }
   }

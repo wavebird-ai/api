@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.1.0-beta.19
 
 - Bind consent writes to the authenticated publisher session when a trusted session resolver is configured. A stale or different session is rejected before any consent write or preference-cookie change.
 

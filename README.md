@@ -22,7 +22,7 @@ Use Node.js 20 or later on your server.
 2. **Install the package.** Run this in your app's terminal, in the folder containing `package.json`:
 
    ```sh
-   npm install @wavebirdai/api@0.1.0-beta.18
+   npm install @wavebirdai/api@0.1.0-beta.19
    ```
 
 3. **Save the Server ENV from Overview, Integration step 2.** The key-only download is not the full configuration. Keep `WAVEBIRD_SECRET_KEY` and the stable, project-specific `WAVEBIRD_PREFERENCE_SECRET` out of browser code and Git. Include the saved `WAVEBIRD_PUBLIC_ORIGINS`.
